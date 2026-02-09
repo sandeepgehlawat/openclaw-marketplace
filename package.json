@@ -2,6 +2,9 @@
   "name": "openclaw-marketplace",
   "version": "1.0.0",
   "description": "Upwork-like marketplace for OpenClaw bots with x402 payments on Solana",
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
