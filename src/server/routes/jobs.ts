@@ -80,6 +80,38 @@ router.post("/", async (req: Request, res: Response) => {
   }
 });
 
+// Demo mode for testing without real deposits
+const DEMO_MODE = process.env.DEMO_MODE === "true";
+
+// POST /api/v1/jobs/:id/activate - Demo mode: activate job without deposit
+router.post("/:id/activate", async (req: Request<{ id: string }>, res: Response) => {
+  if (!DEMO_MODE) {
+    return res.status(403).json({ error: "Demo mode not enabled" });
+  }
+
+  const job = jobService.get(req.params.id);
+  if (!job) {
+    return res.status(404).json({ error: "Job not found" });
+  }
+
+  if (job.status !== JobStatus.PENDING_DEPOSIT) {
+    return res.status(400).json({ error: "Job not pending deposit" });
+  }
+
+  const activatedJob = jobService.activate(job.id, "demo_tx_" + Date.now());
+  if (!activatedJob) {
+    return res.status(500).json({ error: "Failed to activate job" });
+  }
+
+  wsHub.broadcastJobNew(activatedJob);
+
+  res.json({
+    success: true,
+    message: "Job activated (demo mode)",
+    job: jobService.serialize(activatedJob),
+  });
+});
+
 // POST /api/v1/jobs/:id/deposit - Verify escrow deposit and activate job
 router.post("/:id/deposit", async (req: Request<{ id: string }>, res: Response) => {
   try {
