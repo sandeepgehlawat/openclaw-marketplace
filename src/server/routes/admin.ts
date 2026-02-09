@@ -1,6 +1,7 @@
 import { Router, Request, Response, NextFunction } from "express";
 import { paymentService } from "../../services/payment-service.js";
 import { jobService } from "../../services/job-service.js";
+import { escrowService } from "../../services/escrow-service.js";
 import { atomicToUsdc, PLATFORM_FEE_PERCENT, PLATFORM_WALLET, JobStatus } from "../../config/constants.js";
 
 const router = Router();
@@ -239,6 +240,36 @@ router.get("/jobs", async (req: Request, res: Response) => {
     });
   } catch (error) {
     console.error("Error fetching jobs:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// GET /api/v1/admin/escrow - Escrow status and records
+router.get("/escrow", async (req: Request, res: Response) => {
+  try {
+    const records = escrowService.getAllRecords();
+    const balance = await escrowService.getEscrowBalance();
+    const totalHeld = escrowService.getTotalHeld();
+
+    res.json({
+      success: true,
+      escrow: {
+        walletConfigured: !!escrowService.getEscrowWallet(),
+        operational: escrowService.isOperational(),
+        balance: balance,
+        totalHeld: atomicToUsdc(totalHeld),
+        totalHeldAtomic: totalHeld.toString(),
+      },
+      records: records.map(r => ({
+        jobId: r.jobId,
+        amountUsdc: atomicToUsdc(r.amountAtomic),
+        status: r.status,
+        depositVerifiedAt: r.depositVerifiedAt,
+        releasedAt: r.releasedAt,
+      })),
+    });
+  } catch (error) {
+    console.error("Error fetching escrow:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });

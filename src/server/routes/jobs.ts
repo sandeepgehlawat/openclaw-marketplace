@@ -1,10 +1,11 @@
 import { Router, Request, Response } from "express";
 import { createHash } from "crypto";
+import { z, ZodError } from "zod";
 import { jobService } from "../../services/job-service.js";
+import { escrowService } from "../../services/escrow-service.js";
 import { CreateJobSchema, ClaimJobSchema, CompleteJobSchema } from "../../models/job.js";
-import { JobStatus } from "../../config/constants.js";
+import { JobStatus, ESCROW_WALLET } from "../../config/constants.js";
 import { wsHub } from "../websocket/hub.js";
-import { ZodError } from "zod";
 
 // Helper to create result hash for verification
 function hashResult(result: string): string {
@@ -14,7 +15,16 @@ function hashResult(result: string): string {
 const router = Router();
 
 // Valid job statuses for filtering
-const VALID_STATUSES = ["open", "claimed", "completed", "paid"];
+const VALID_STATUSES = ["pending_deposit", "open", "claimed", "completed", "paid", "cancelled", "expired"];
+
+// Validation schemas for escrow endpoints
+const VerifyDepositSchema = z.object({
+  depositTxSig: z.string().min(80).max(100), // Solana tx signature
+});
+
+const CancelJobSchema = z.object({
+  requesterWallet: z.string().min(32).max(44),
+});
 
 // Sanitize error messages - never expose internal details
 function sanitizeError(error: unknown): string {
@@ -30,6 +40,9 @@ function sanitizeError(error: unknown): string {
       "Only assigned worker can complete",
       "Job not in claimed status",
       "Invalid wallet address",
+      "Only requester can cancel",
+      "Job cannot be cancelled",
+      "Job not pending deposit",
     ];
     if (safeMessages.some(msg => error.message.includes(msg))) {
       return error.message;
@@ -38,18 +51,23 @@ function sanitizeError(error: unknown): string {
   return "Request failed";
 }
 
-// POST /api/v1/jobs - Create a new job
+// POST /api/v1/jobs - Create a new job (returns escrow deposit instructions)
 router.post("/", async (req: Request, res: Response) => {
   try {
     const input = CreateJobSchema.parse(req.body);
     const job = jobService.create(input);
 
-    // Broadcast to connected clients
-    wsHub.broadcastJobNew(job);
-
+    // Don't broadcast yet - job is pending deposit
     res.status(201).json({
       success: true,
       job: jobService.serialize(job),
+      escrow: {
+        status: "pending_deposit",
+        depositTo: escrowService.getEscrowWallet(),
+        amountUsdc: job.bountyUsdc,
+        amountAtomic: job.bountyAtomic.toString(),
+        instructions: `Send ${job.bountyUsdc} USDC to escrow wallet, then call POST /api/v1/jobs/${job.id}/deposit with the transaction signature`,
+      },
     });
   } catch (error) {
     if (error instanceof ZodError) {
@@ -58,6 +76,95 @@ router.post("/", async (req: Request, res: Response) => {
         fields: error.errors.map(e => e.path.join(".")),
       });
     }
+    return res.status(400).json({ error: sanitizeError(error) });
+  }
+});
+
+// POST /api/v1/jobs/:id/deposit - Verify escrow deposit and activate job
+router.post("/:id/deposit", async (req: Request<{ id: string }>, res: Response) => {
+  try {
+    const { depositTxSig } = VerifyDepositSchema.parse(req.body);
+    const job = jobService.get(req.params.id);
+
+    if (!job) {
+      return res.status(404).json({ error: "Job not found" });
+    }
+
+    if (job.status !== JobStatus.PENDING_DEPOSIT) {
+      return res.status(400).json({ error: "Job not pending deposit" });
+    }
+
+    // Verify the deposit on-chain
+    const result = await escrowService.verifyDeposit(
+      job.id,
+      job.requesterWallet,
+      job.bountyAtomic,
+      depositTxSig
+    );
+
+    if (!result.success) {
+      return res.status(400).json({ error: result.error || "Deposit verification failed" });
+    }
+
+    // Activate the job
+    const activatedJob = jobService.activate(job.id, depositTxSig);
+    if (!activatedJob) {
+      return res.status(500).json({ error: "Failed to activate job" });
+    }
+
+    // Now broadcast to workers
+    wsHub.broadcastJobNew(activatedJob);
+
+    res.json({
+      success: true,
+      message: "Escrow verified. Job is now open for workers.",
+      job: jobService.serialize(activatedJob),
+    });
+  } catch (error) {
+    if (error instanceof ZodError) {
+      return res.status(400).json({ error: "Invalid deposit transaction signature" });
+    }
+    return res.status(400).json({ error: sanitizeError(error) });
+  }
+});
+
+// POST /api/v1/jobs/:id/cancel - Cancel job and refund escrow
+router.post("/:id/cancel", async (req: Request<{ id: string }>, res: Response) => {
+  try {
+    const { requesterWallet } = CancelJobSchema.parse(req.body);
+    const job = jobService.get(req.params.id);
+
+    if (!job) {
+      return res.status(404).json({ error: "Job not found" });
+    }
+
+    // Only requester can cancel
+    if (job.requesterWallet !== requesterWallet) {
+      return res.status(403).json({ error: "Only requester can cancel" });
+    }
+
+    // Can only cancel pending or open jobs
+    if (job.status !== JobStatus.PENDING_DEPOSIT && job.status !== JobStatus.OPEN) {
+      return res.status(400).json({ error: "Job cannot be cancelled - already in progress" });
+    }
+
+    // If escrow was deposited, refund it
+    if (job.status === JobStatus.OPEN && escrowService.hasVerifiedEscrow(job.id)) {
+      const refundResult = await escrowService.refundToRequester(job.id);
+      if (!refundResult.success) {
+        return res.status(500).json({ error: "Refund failed - contact support" });
+      }
+    }
+
+    // Cancel the job
+    const cancelledJob = jobService.cancel(job.id, requesterWallet);
+
+    res.json({
+      success: true,
+      message: job.status === JobStatus.OPEN ? "Job cancelled, escrow refunded" : "Job cancelled",
+      job: cancelledJob ? jobService.serialize(cancelledJob) : null,
+    });
+  } catch (error) {
     return res.status(400).json({ error: sanitizeError(error) });
   }
 });

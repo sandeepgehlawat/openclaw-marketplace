@@ -24,7 +24,7 @@ export type CreateJobInput = z.infer<typeof CreateJobSchema>;
 export type ClaimJobInput = z.infer<typeof ClaimJobSchema>;
 export type CompleteJobInput = z.infer<typeof CompleteJobSchema>;
 
-// Job model
+// Job model (with escrow support)
 export interface Job {
   id: string;
   title: string;
@@ -40,6 +40,11 @@ export interface Job {
   completedAt: Date | null;
   paidAt: Date | null;
   paymentTxSig: string | null;
+  // Escrow fields
+  escrowDepositTx: string | null;
+  escrowVerifiedAt: Date | null;
+  escrowReleaseTx: string | null;
+  expiresAt: Date | null;
 }
 
 // Result model (stored separately for x402 paywall)
@@ -54,10 +59,14 @@ export interface JobResult {
 const jobs = new Map<string, Job>();
 const results = new Map<string, JobResult>();
 
+// Job expiry time (24 hours by default)
+const JOB_EXPIRY_MS = 24 * 60 * 60 * 1000;
+
 // CRUD operations
 export function createJob(input: CreateJobInput): Job {
   const id = `job_${uuidv4().slice(0, 8)}`;
   const bountyAtomic = BigInt(Math.round(input.bountyUsdc * 1e6));
+  const now = new Date();
 
   const job: Job = {
     id,
@@ -67,16 +76,76 @@ export function createJob(input: CreateJobInput): Job {
     bountyAtomic,
     requesterWallet: input.requesterWallet,
     workerWallet: null,
-    status: JobStatus.OPEN,
+    status: JobStatus.PENDING_DEPOSIT, // Start in pending until escrow verified
     tags: input.tags || [],
-    createdAt: new Date(),
+    createdAt: now,
     claimedAt: null,
     completedAt: null,
     paidAt: null,
     paymentTxSig: null,
+    // Escrow fields
+    escrowDepositTx: null,
+    escrowVerifiedAt: null,
+    escrowReleaseTx: null,
+    expiresAt: new Date(now.getTime() + JOB_EXPIRY_MS),
   };
 
   jobs.set(id, job);
+  return job;
+}
+
+// Activate job after escrow deposit verified
+export function activateJob(id: string, depositTxSig: string): Job | null {
+  const job = jobs.get(id);
+  if (!job || job.status !== JobStatus.PENDING_DEPOSIT) {
+    return null;
+  }
+
+  job.status = JobStatus.OPEN;
+  job.escrowDepositTx = depositTxSig;
+  job.escrowVerifiedAt = new Date();
+  // Reset expiry from activation time
+  job.expiresAt = new Date(Date.now() + JOB_EXPIRY_MS);
+  return job;
+}
+
+// Cancel job and mark for refund
+export function cancelJob(id: string, requesterWallet: string): Job | null {
+  const job = jobs.get(id);
+  if (!job) return null;
+
+  // Only requester can cancel
+  if (job.requesterWallet !== requesterWallet) return null;
+
+  // Can only cancel if pending or open (not yet claimed)
+  if (job.status !== JobStatus.PENDING_DEPOSIT && job.status !== JobStatus.OPEN) {
+    return null;
+  }
+
+  job.status = JobStatus.CANCELLED;
+  return job;
+}
+
+// Expire job (for cleanup)
+export function expireJob(id: string): Job | null {
+  const job = jobs.get(id);
+  if (!job) return null;
+
+  // Can only expire open jobs that haven't been claimed
+  if (job.status !== JobStatus.OPEN) return null;
+
+  job.status = JobStatus.EXPIRED;
+  return job;
+}
+
+// Mark escrow as released
+export function markEscrowReleased(id: string, releaseTxSig: string): Job | null {
+  const job = jobs.get(id);
+  if (!job) return null;
+
+  job.escrowReleaseTx = releaseTxSig;
+  job.paidAt = new Date();
+  job.status = JobStatus.PAID;
   return job;
 }
 
@@ -148,10 +217,27 @@ export function markJobPaid(id: string, txSig: string): Job | null {
   return job;
 }
 
-// Serialize job for API response (handle BigInt)
+// Serialize job for API response (handle BigInt and dates)
 export function serializeJob(job: Job): object {
   return {
-    ...job,
+    id: job.id,
+    title: job.title,
+    description: job.description,
+    bountyUsdc: job.bountyUsdc,
     bountyAtomic: job.bountyAtomic.toString(),
+    requesterWallet: job.requesterWallet,
+    workerWallet: job.workerWallet,
+    status: job.status,
+    tags: job.tags,
+    createdAt: job.createdAt,
+    claimedAt: job.claimedAt,
+    completedAt: job.completedAt,
+    paidAt: job.paidAt,
+    expiresAt: job.expiresAt,
+    // Only include escrow info if relevant
+    escrow: job.escrowDepositTx ? {
+      depositVerified: !!job.escrowVerifiedAt,
+      releaseTx: job.escrowReleaseTx,
+    } : undefined,
   };
 }

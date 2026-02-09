@@ -38,13 +38,20 @@ export function calculateFees(totalAtomic: bigint): { workerAmount: bigint; plat
   return { workerAmount, platformFee };
 }
 
-// Job status
+// Job status (with escrow flow)
 export enum JobStatus {
-  OPEN = "open",
-  CLAIMED = "claimed",
-  COMPLETED = "completed",
-  PAID = "paid",
+  PENDING_DEPOSIT = "pending_deposit", // Awaiting escrow deposit
+  OPEN = "open",                       // Escrow verified, available for workers
+  CLAIMED = "claimed",                 // Worker claimed the job
+  COMPLETED = "completed",             // Worker submitted result
+  PAID = "paid",                       // Escrow released to worker
+  CANCELLED = "cancelled",             // Cancelled, escrow refunded
+  EXPIRED = "expired",                 // Expired, escrow refunded
 }
+
+// Escrow configuration
+export const ESCROW_WALLET = process.env.ESCROW_WALLET || process.env.PLATFORM_WALLET || "";
+export const JOB_EXPIRY_HOURS = parseInt(process.env.JOB_EXPIRY_HOURS || "24", 10);
 
 // WebSocket event types
 export enum WsEventType {

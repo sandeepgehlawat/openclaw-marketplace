@@ -7,6 +7,10 @@ import {
   getResult,
   markJobPaid,
   serializeJob,
+  activateJob,
+  cancelJob,
+  expireJob,
+  markEscrowReleased,
   CreateJobInput,
   Job,
   JobResult,
@@ -79,6 +83,56 @@ export class JobService {
 
   markPaid(id: string, txSig: string): Job | null {
     return markJobPaid(id, txSig);
+  }
+
+  // Escrow-related methods
+  activate(id: string, depositTxSig: string): Job | null {
+    const job = getJob(id);
+    if (!job) {
+      throw new Error("Job not found");
+    }
+    if (job.status !== JobStatus.PENDING_DEPOSIT) {
+      throw new Error("Job not pending deposit");
+    }
+    return activateJob(id, depositTxSig);
+  }
+
+  cancel(id: string, requesterWallet: string): Job | null {
+    if (!isValidPublicKey(requesterWallet)) {
+      throw new Error("Invalid wallet address");
+    }
+    const job = getJob(id);
+    if (!job) {
+      throw new Error("Job not found");
+    }
+    if (job.requesterWallet !== requesterWallet) {
+      throw new Error("Only requester can cancel");
+    }
+    if (job.status !== JobStatus.PENDING_DEPOSIT && job.status !== JobStatus.OPEN) {
+      throw new Error("Job cannot be cancelled - already claimed or completed");
+    }
+    return cancelJob(id, requesterWallet);
+  }
+
+  expire(id: string): Job | null {
+    return expireJob(id);
+  }
+
+  markEscrowReleased(id: string, releaseTxSig: string): Job | null {
+    return markEscrowReleased(id, releaseTxSig);
+  }
+
+  // List jobs pending deposit (for requester to see their pending jobs)
+  listPendingDeposit(requesterWallet: string): Job[] {
+    return listJobs(JobStatus.PENDING_DEPOSIT).filter(
+      j => j.requesterWallet === requesterWallet
+    );
+  }
+
+  // Check if job is expired
+  isExpired(job: Job): boolean {
+    if (!job.expiresAt) return false;
+    return new Date() > job.expiresAt;
   }
 
   serialize(job: Job): object {
