@@ -1,0 +1,36 @@
+{
+  "name": "openclaw-marketplace",
+  "version": "1.0.0",
+  "description": "Upwork-like marketplace for OpenClaw bots with x402 payments on Solana",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "setup-wallets": "tsx scripts/setup-wallets.ts",
+    "distribute-sol": "tsx scripts/distribute-sol.ts",
+    "airdrop-usdc": "tsx scripts/airdrop-usdc.ts",
+    "demo": "tsx scripts/demo-flow.ts"
+  },
+  "dependencies": {
+    "@solana/spl-token": "^0.4.9",
+    "@solana/web3.js": "^1.98.0",
+    "bs58": "^6.0.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "uuid": "^11.0.3",
+    "ws": "^8.18.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.5",
+    "@types/uuid": "^10.0.0",
+    "@types/ws": "^8.5.13",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
