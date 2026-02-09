@@ -201,6 +201,31 @@
       font-weight: 600;
     }
 
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .btn-post {
+      padding: 10px 18px;
+      background: var(--gradient);
+      border: none;
+      border-radius: 10px;
+      color: white;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      white-space: nowrap;
+    }
+
+    .btn-post:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 15px rgba(139, 92, 246, 0.4);
+    }
+
     .tabs {
       display: flex;
       gap: 4px;
@@ -475,6 +500,144 @@
       font-size: 13px;
     }
 
+    /* Form */
+    .form-group {
+      margin-bottom: 16px;
+    }
+
+    .form-label {
+      display: block;
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+      font-weight: 500;
+    }
+
+    .form-input {
+      width: 100%;
+      padding: 12px 14px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      color: var(--text);
+      font-size: 14px;
+      font-family: inherit;
+      transition: border-color 0.2s;
+    }
+
+    .form-input:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+
+    .form-input::placeholder {
+      color: var(--text-dim);
+    }
+
+    textarea.form-input {
+      resize: vertical;
+      min-height: 80px;
+    }
+
+    .form-row {
+      display: flex;
+      gap: 12px;
+    }
+
+    .form-row .form-group {
+      flex: 1;
+    }
+
+    .form-hint {
+      font-size: 11px;
+      color: var(--text-dim);
+      margin-top: 4px;
+    }
+
+    .btn-submit {
+      width: 100%;
+      padding: 14px;
+      background: var(--gradient);
+      border: none;
+      border-radius: 10px;
+      color: white;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      margin-top: 8px;
+    }
+
+    .btn-submit:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 20px rgba(139, 92, 246, 0.4);
+    }
+
+    .btn-submit:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+
+    .form-success {
+      padding: 14px;
+      background: rgba(34, 197, 94, 0.1);
+      border: 1px solid rgba(34, 197, 94, 0.2);
+      border-radius: 10px;
+      color: var(--green);
+      font-size: 13px;
+      margin-bottom: 16px;
+    }
+
+    .form-error {
+      padding: 14px;
+      background: rgba(239, 68, 68, 0.1);
+      border: 1px solid rgba(239, 68, 68, 0.2);
+      border-radius: 10px;
+      color: var(--red);
+      font-size: 13px;
+      margin-bottom: 16px;
+    }
+
+    .escrow-info {
+      padding: 16px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      margin-top: 16px;
+    }
+
+    .escrow-info h4 {
+      font-size: 14px;
+      margin-bottom: 12px;
+      color: var(--yellow);
+    }
+
+    .escrow-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      padding: 6px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .escrow-row:last-child {
+      border-bottom: none;
+    }
+
+    .escrow-label {
+      color: var(--text-dim);
+    }
+
+    .escrow-value {
+      color: var(--text);
+      font-family: monospace;
+      word-break: break-all;
+      text-align: right;
+      max-width: 60%;
+    }
+
     /* Live Events Panel */
     .events-toggle {
       position: fixed;
@@ -489,15 +652,20 @@
       font-size: 20px;
       cursor: pointer;
       box-shadow: 0 4px 20px rgba(139, 92, 246, 0.4);
-      z-index: 150;
+      z-index: 170;
       display: flex;
       align-items: center;
       justify-content: center;
-      transition: transform 0.2s;
+      transition: transform 0.2s, opacity 0.2s;
     }
 
     .events-toggle:hover {
       transform: scale(1.05);
+    }
+
+    .events-toggle.hidden {
+      opacity: 0;
+      pointer-events: none;
     }
 
     .events-toggle .badge {
@@ -530,10 +698,12 @@
       max-height: 60vh;
       display: flex;
       flex-direction: column;
+      pointer-events: none;
     }
 
     .events-panel.open {
       transform: translateY(0);
+      pointer-events: auto;
     }
 
     .events-handle {
@@ -741,7 +911,17 @@
 
       .section-header {
         flex-direction: column;
-        align-items: flex-start;
+        align-items: stretch;
+        gap: 12px;
+      }
+
+      .header-actions {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .btn-post {
+        text-align: center;
       }
 
       .tabs {
@@ -750,6 +930,11 @@
       }
 
       .tab { padding: 8px 12px; font-size: 12px; }
+
+      .form-row {
+        flex-direction: column;
+        gap: 0;
+      }
 
       .events-toggle {
         bottom: 16px;
@@ -822,12 +1007,15 @@
 
     <div class="section-header">
       <h2 class="section-title">Jobs</h2>
-      <div class="tabs">
-        <button class="tab active" data-filter="all">All</button>
-        <button class="tab" data-filter="open">Open</button>
-        <button class="tab" data-filter="claimed">Active</button>
-        <button class="tab" data-filter="completed">Done</button>
-        <button class="tab" data-filter="paid">Paid</button>
+      <div class="header-actions">
+        <button class="btn-post" onclick="openPostModal()">+ Post Job</button>
+        <div class="tabs">
+          <button class="tab active" data-filter="all">All</button>
+          <button class="tab" data-filter="open">Open</button>
+          <button class="tab" data-filter="claimed">Active</button>
+          <button class="tab" data-filter="completed">Done</button>
+          <button class="tab" data-filter="paid">Paid</button>
+        </div>
       </div>
     </div>
 
@@ -848,6 +1036,44 @@
         <button class="modal-close" onclick="closeModal()">&times;</button>
       </div>
       <div class="modal-body" id="modalBody"></div>
+    </div>
+  </div>
+
+  <!-- Post Job Modal -->
+  <div class="modal-backdrop" id="postModalBackdrop">
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <h3 class="modal-title">Post a Job</h3>
+        <button class="modal-close" onclick="closePostModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="postFormMessage"></div>
+        <form id="postJobForm" onsubmit="submitJob(event)">
+          <div class="form-group">
+            <label class="form-label">Job Title</label>
+            <input type="text" class="form-input" name="title" placeholder="e.g., Analyze DeFi protocols" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Description</label>
+            <textarea class="form-input" name="description" placeholder="Describe what needs to be done..." required></textarea>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Bounty (USDC)</label>
+              <input type="number" class="form-input" name="bountyUsdc" placeholder="0.10" step="0.01" min="0.01" required>
+              <div class="form-hint">Minimum 0.01 USDC</div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Your Wallet</label>
+              <input type="text" class="form-input" name="requesterWallet" placeholder="Solana wallet address" required>
+              <div class="form-hint">For escrow refunds</div>
+            </div>
+          </div>
+          <button type="submit" class="btn-submit" id="postSubmitBtn">Create Job</button>
+        </form>
+        <div id="escrowInstructions" style="display:none"></div>
+      </div>
     </div>
   </div>
 
@@ -964,7 +1190,11 @@
 
     function toggleEvents() {
       eventsOpen = !eventsOpen;
-      document.getElementById('eventsPanel').classList.toggle('open', eventsOpen);
+      const panel = document.getElementById('eventsPanel');
+      const toggle = document.getElementById('eventsToggle');
+
+      panel.classList.toggle('open', eventsOpen);
+      toggle.classList.toggle('hidden', eventsOpen);
 
       if (eventsOpen) {
         unreadEvents = 0;
@@ -1064,6 +1294,91 @@
     document.getElementById('modalBackdrop').addEventListener('click', e => {
       if (e.target.id === 'modalBackdrop') closeModal();
     });
+
+    document.getElementById('postModalBackdrop').addEventListener('click', e => {
+      if (e.target.id === 'postModalBackdrop') closePostModal();
+    });
+
+    function openPostModal() {
+      document.getElementById('postJobForm').reset();
+      document.getElementById('postFormMessage').innerHTML = '';
+      document.getElementById('escrowInstructions').style.display = 'none';
+      document.getElementById('postSubmitBtn').disabled = false;
+      document.getElementById('postSubmitBtn').textContent = 'Create Job';
+      document.getElementById('postModalBackdrop').classList.add('active');
+    }
+
+    function closePostModal() {
+      document.getElementById('postModalBackdrop').classList.remove('active');
+    }
+
+    async function submitJob(e) {
+      e.preventDefault();
+      const form = e.target;
+      const btn = document.getElementById('postSubmitBtn');
+      const msgDiv = document.getElementById('postFormMessage');
+
+      btn.disabled = true;
+      btn.textContent = 'Creating...';
+      msgDiv.innerHTML = '';
+
+      const data = {
+        title: form.title.value.trim(),
+        description: form.description.value.trim(),
+        bountyUsdc: parseFloat(form.bountyUsdc.value),
+        requesterWallet: form.requesterWallet.value.trim()
+      };
+
+      try {
+        const res = await fetch('/api/v1/jobs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data)
+        });
+
+        const result = await res.json();
+
+        if (!res.ok) {
+          throw new Error(result.error || 'Failed to create job');
+        }
+
+        msgDiv.innerHTML = '<div class="form-success">Job created! Send USDC to escrow to activate it.</div>';
+
+        document.getElementById('escrowInstructions').innerHTML = `
+          <div class="escrow-info">
+            <h4>Escrow Deposit Required</h4>
+            <div class="escrow-row">
+              <span class="escrow-label">Job ID</span>
+              <span class="escrow-value">${result.job.id}</span>
+            </div>
+            <div class="escrow-row">
+              <span class="escrow-label">Amount</span>
+              <span class="escrow-value" style="color:var(--green)">${result.escrow.amountUsdc} USDC</span>
+            </div>
+            <div class="escrow-row">
+              <span class="escrow-label">Send To</span>
+              <span class="escrow-value">${result.escrow.depositTo}</span>
+            </div>
+            <div class="escrow-row">
+              <span class="escrow-label">Status</span>
+              <span class="escrow-value" style="color:var(--yellow)">Pending Deposit</span>
+            </div>
+          </div>
+        `;
+        document.getElementById('escrowInstructions').style.display = 'block';
+
+        btn.textContent = 'Job Created';
+        form.style.display = 'none';
+
+        // Refresh jobs list
+        await fetchJobs();
+
+      } catch (err) {
+        msgDiv.innerHTML = `<div class="form-error">${esc(err.message)}</div>`;
+        btn.disabled = false;
+        btn.textContent = 'Create Job';
+      }
+    }
 
     function esc(str) {
       const div = document.createElement('div');
