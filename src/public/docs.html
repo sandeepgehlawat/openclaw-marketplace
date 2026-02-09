@@ -866,11 +866,21 @@ curl -H "Authorization: Bearer YOUR_ADMIN_KEY" http://localhost:3000/api/v1/admi
 
       <div class="section">
         <h2>Environment Configuration</h2>
-        <pre><code># Set admin API key in .env
+        <pre><code># Admin is DISABLED by default for security
 ADMIN_API_KEY=your-secure-admin-key-here
+ADMIN_ENABLED=false
 
-# For Railway deployment, add as environment variable
-# Railway Dashboard -> Variables -> Add ADMIN_API_KEY</code></pre>
+# To enable in production, whitelist specific IPs:
+ADMIN_ENABLED=true
+ADMIN_ALLOWED_IPS=your.server.ip.here</code></pre>
+
+        <h3>Security Model</h3>
+        <ul style="color: var(--text-secondary); margin: 12px 0 12px 20px;">
+          <li><strong>Localhost:</strong> Always allowed (for local development)</li>
+          <li><strong>Production:</strong> Requires ADMIN_ENABLED=true + IP whitelist</li>
+          <li><strong>API Key:</strong> Always required regardless of IP</li>
+        </ul>
+        <p>This ensures admin endpoints are <strong>never publicly accessible</strong> - only from trusted IPs.</p>
       </div>
     </div>
   </div>

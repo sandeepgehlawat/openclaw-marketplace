@@ -5,11 +5,50 @@ import { atomicToUsdc, PLATFORM_FEE_PERCENT, PLATFORM_WALLET, JobStatus } from "
 
 const router = Router();
 
-// Admin API key from environment - REQUIRED for security
+// Admin configuration from environment
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY;
+const ADMIN_ALLOWED_IPS = process.env.ADMIN_ALLOWED_IPS?.split(",") || [];
+const ADMIN_ENABLED = process.env.ADMIN_ENABLED === "true";
+
+// Check if IP is allowed (localhost or explicitly whitelisted)
+function isAllowedIP(ip: string | undefined): boolean {
+  if (!ip) return false;
+
+  // Always allow localhost
+  const localhostIPs = ["127.0.0.1", "::1", "::ffff:127.0.0.1", "localhost"];
+  if (localhostIPs.includes(ip)) return true;
+
+  // Check whitelist
+  if (ADMIN_ALLOWED_IPS.includes(ip)) return true;
+
+  return false;
+}
 
 // Authentication middleware for admin routes
 function requireAdminAuth(req: Request, res: Response, next: NextFunction) {
+  const clientIP = req.ip || req.socket.remoteAddress;
+
+  // Admin must be explicitly enabled in production
+  if (!ADMIN_ENABLED) {
+    // In development (localhost), allow without ADMIN_ENABLED
+    if (!isAllowedIP(clientIP)) {
+      console.warn(`Admin access denied - not enabled. IP: ${clientIP}`);
+      return res.status(403).json({
+        error: "Admin access denied",
+        message: "Admin endpoints are disabled. Set ADMIN_ENABLED=true and configure ADMIN_ALLOWED_IPS for production."
+      });
+    }
+  }
+
+  // Check IP whitelist (skip for localhost in dev)
+  if (ADMIN_ENABLED && !isAllowedIP(clientIP)) {
+    console.warn(`Admin access denied from non-whitelisted IP: ${clientIP}`);
+    return res.status(403).json({
+      error: "Access denied",
+      message: "Your IP is not authorized for admin access"
+    });
+  }
+
   // If no admin key is configured, disable admin endpoints entirely
   if (!ADMIN_API_KEY) {
     console.warn("ADMIN_API_KEY not configured - admin endpoints disabled");
@@ -29,7 +68,7 @@ function requireAdminAuth(req: Request, res: Response, next: NextFunction) {
   }
 
   if (apiKey !== ADMIN_API_KEY) {
-    console.warn(`Invalid admin API key attempt from ${req.ip}`);
+    console.warn(`Invalid admin API key attempt from ${clientIP}`);
     return res.status(403).json({ error: "Invalid API key" });
   }
 
