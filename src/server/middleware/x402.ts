@@ -22,7 +22,7 @@ export function x402Paywall() {
     const jobId = req.params.jobId;
 
     // Get job details
-    const job = jobService.get(jobId);
+    const job = await jobService.get(jobId);
     if (!job) {
       return res.status(404).json({ error: "Job not found" });
     }
@@ -106,7 +106,7 @@ export function x402Paywall() {
       });
 
       // Mark job as paid
-      jobService.markPaid(jobId, result.txSig);
+      await jobService.markPaid(jobId, result.txSig);
 
       // Add payment info to request
       req.payment = {
