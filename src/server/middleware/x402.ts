@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import { jobService } from "../../services/job-service.js";
 import { paymentService } from "../../services/payment-service.js";
 import { JobStatus } from "../../config/constants.js";
-import { isTransactionProcessed, markTransactionProcessed, logSecurityEvent } from "./security.js";
+import { checkAndMarkTransaction, logSecurityEvent } from "./security.js";
 
 // Extend Express Request to include payment info
 declare global {
@@ -88,17 +88,14 @@ export function x402Paywall() {
         });
       }
 
-      // Check for transaction replay attack
-      if (isTransactionProcessed(result.txSig)) {
+      // Atomic check for transaction replay attack
+      const { alreadyProcessed } = checkAndMarkTransaction(result.txSig);
+      if (alreadyProcessed) {
         logSecurityEvent("transaction_replay_attempt", { jobId, txSig: result.txSig });
         return res.status(400).json({
-          error: "Transaction already processed",
-          message: "This transaction has already been used for payment",
+          error: "Transaction already processed"
         });
       }
-
-      // Mark transaction as processed (replay protection)
-      markTransactionProcessed(result.txSig);
 
       // Log successful payment
       logSecurityEvent("payment_success", {
@@ -127,8 +124,7 @@ export function x402Paywall() {
     } catch (error) {
       console.error("Payment processing error:", error);
       return res.status(500).json({
-        error: "Payment processing failed",
-        message: error instanceof Error ? error.message : "Unknown error",
+        error: "Payment processing failed"
       });
     }
   };

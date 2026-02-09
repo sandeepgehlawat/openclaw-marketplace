@@ -13,6 +13,31 @@ function hashResult(result: string): string {
 
 const router = Router();
 
+// Valid job statuses for filtering
+const VALID_STATUSES = ["open", "claimed", "completed", "paid"];
+
+// Sanitize error messages - never expose internal details
+function sanitizeError(error: unknown): string {
+  if (error instanceof ZodError) {
+    return "Invalid request data";
+  }
+  if (error instanceof Error) {
+    // Only return safe, predefined messages
+    const safeMessages = [
+      "Job not found",
+      "Job cannot be claimed",
+      "Job already claimed",
+      "Only assigned worker can complete",
+      "Job not in claimed status",
+      "Invalid wallet address",
+    ];
+    if (safeMessages.some(msg => error.message.includes(msg))) {
+      return error.message;
+    }
+  }
+  return "Request failed";
+}
+
 // POST /api/v1/jobs - Create a new job
 router.post("/", async (req: Request, res: Response) => {
   try {
@@ -30,20 +55,27 @@ router.post("/", async (req: Request, res: Response) => {
     if (error instanceof ZodError) {
       return res.status(400).json({
         error: "Validation failed",
-        details: error.errors,
+        fields: error.errors.map(e => e.path.join(".")),
       });
     }
-    if (error instanceof Error) {
-      return res.status(400).json({ error: error.message });
-    }
-    res.status(500).json({ error: "Internal server error" });
+    return res.status(400).json({ error: sanitizeError(error) });
   }
 });
 
 // GET /api/v1/jobs - List jobs
 router.get("/", async (req: Request, res: Response) => {
   try {
-    const status = req.query.status as JobStatus | undefined;
+    const statusParam = req.query.status as string | undefined;
+
+    // Validate status parameter
+    let status: JobStatus | undefined;
+    if (statusParam) {
+      if (!VALID_STATUSES.includes(statusParam)) {
+        return res.status(400).json({ error: "Invalid status filter" });
+      }
+      status = statusParam as JobStatus;
+    }
+
     const jobs = status ? jobService.list(status) : jobService.list();
 
     res.json({
@@ -110,13 +142,10 @@ router.post("/:id/claim", async (req: Request<{ id: string }>, res: Response) =>
     if (error instanceof ZodError) {
       return res.status(400).json({
         error: "Validation failed",
-        details: error.errors,
+        fields: error.errors.map(e => e.path.join(".")),
       });
     }
-    if (error instanceof Error) {
-      return res.status(400).json({ error: error.message });
-    }
-    res.status(500).json({ error: "Internal server error" });
+    return res.status(400).json({ error: sanitizeError(error) });
   }
 });
 
@@ -146,13 +175,10 @@ router.post("/:id/complete", async (req: Request<{ id: string }>, res: Response)
     if (error instanceof ZodError) {
       return res.status(400).json({
         error: "Validation failed",
-        details: error.errors,
+        fields: error.errors.map(e => e.path.join(".")),
       });
     }
-    if (error instanceof Error) {
-      return res.status(400).json({ error: error.message });
-    }
-    res.status(500).json({ error: "Internal server error" });
+    return res.status(400).json({ error: sanitizeError(error) });
   }
 });
 

@@ -6,6 +6,17 @@ const rateLimitStore = new Map<string, { count: number; resetAt: number }>();
 // Configuration
 const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
 const RATE_LIMIT_MAX_REQUESTS = 100; // 100 requests per minute
+const RATE_LIMIT_CLEANUP_INTERVAL = 5 * 60 * 1000; // Clean every 5 minutes
+
+// Periodic cleanup of expired rate limit records
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, record] of rateLimitStore) {
+    if (now > record.resetAt) {
+      rateLimitStore.delete(ip);
+    }
+  }
+}, RATE_LIMIT_CLEANUP_INTERVAL);
 
 /**
  * Rate limiting middleware
@@ -33,7 +44,6 @@ export function rateLimit() {
     if (record.count > RATE_LIMIT_MAX_REQUESTS) {
       return res.status(429).json({
         error: "Too many requests",
-        message: `Rate limit exceeded. Try again in ${Math.ceil((record.resetAt - now) / 1000)} seconds`,
         retryAfter: Math.ceil((record.resetAt - now) / 1000),
       });
     }
@@ -74,8 +84,9 @@ export function securityHeaders() {
 }
 
 /**
- * Validate Solana signature (for authenticated endpoints)
- * Bots can sign a message with their private key to prove ownership
+ * Solana signature validation types
+ * NOTE: Full signature verification not implemented in this version
+ * Payment verification relies on on-chain transaction verification instead
  */
 export interface SignedRequest {
   wallet: string;
@@ -84,42 +95,51 @@ export interface SignedRequest {
   timestamp: number;
 }
 
-export function validateSignature(signed: SignedRequest): boolean {
-  // Check timestamp is recent (within 5 minutes)
-  const now = Date.now();
-  if (Math.abs(now - signed.timestamp) > 5 * 60 * 1000) {
-    return false;
-  }
-
-  // In production, verify the signature using @solana/web3.js
-  // const verified = nacl.sign.detached.verify(
-  //   Buffer.from(signed.message),
-  //   Buffer.from(signed.signature, 'base64'),
-  //   new PublicKey(signed.wallet).toBytes()
-  // );
-
-  return true; // Placeholder - implement full verification as needed
-}
+// Signature validation is NOT used - payment is verified on-chain
+// Keeping interface for future wallet authentication if needed
 
 /**
  * Transaction replay protection
  * Prevents the same transaction from being used twice
+ * Uses atomic check-and-set to prevent race conditions
  */
 const processedTransactions = new Set<string>();
+const txTimestamps = new Map<string, number>();
 const TX_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
+const CLEANUP_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 
+// Atomic check-and-mark operation
+// Returns true if transaction was already processed, false if newly marked
+export function checkAndMarkTransaction(txSig: string): { alreadyProcessed: boolean } {
+  if (processedTransactions.has(txSig)) {
+    return { alreadyProcessed: true };
+  }
+  // Atomically add (JavaScript is single-threaded, so this is safe)
+  processedTransactions.add(txSig);
+  txTimestamps.set(txSig, Date.now());
+  return { alreadyProcessed: false };
+}
+
+// Legacy functions for backward compatibility
 export function isTransactionProcessed(txSig: string): boolean {
   return processedTransactions.has(txSig);
 }
 
 export function markTransactionProcessed(txSig: string): void {
   processedTransactions.add(txSig);
-
-  // Clean up old transactions periodically
-  setTimeout(() => {
-    processedTransactions.delete(txSig);
-  }, TX_EXPIRY_MS);
+  txTimestamps.set(txSig, Date.now());
 }
+
+// Periodic cleanup of expired transactions
+setInterval(() => {
+  const now = Date.now();
+  for (const [txSig, timestamp] of txTimestamps) {
+    if (now - timestamp > TX_EXPIRY_MS) {
+      processedTransactions.delete(txSig);
+      txTimestamps.delete(txSig);
+    }
+  }
+}, CLEANUP_INTERVAL_MS);
 
 /**
  * Sanitize user input

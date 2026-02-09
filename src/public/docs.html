@@ -866,21 +866,21 @@ curl -H "Authorization: Bearer YOUR_ADMIN_KEY" http://localhost:3000/api/v1/admi
 
       <div class="section">
         <h2>Environment Configuration</h2>
-        <pre><code># Admin is DISABLED by default for security
+        <pre><code># Admin requires BOTH:
+# 1. Valid API key
+# 2. Whitelisted IP (localhost always allowed)
 ADMIN_API_KEY=your-secure-admin-key-here
-ADMIN_ENABLED=false
 
-# To enable in production, whitelist specific IPs:
-ADMIN_ENABLED=true
+# For remote admin access, whitelist IPs:
 ADMIN_ALLOWED_IPS=your.server.ip.here</code></pre>
 
         <h3>Security Model</h3>
         <ul style="color: var(--text-secondary); margin: 12px 0 12px 20px;">
-          <li><strong>Localhost:</strong> Always allowed (for local development)</li>
-          <li><strong>Production:</strong> Requires ADMIN_ENABLED=true + IP whitelist</li>
-          <li><strong>API Key:</strong> Always required regardless of IP</li>
+          <li><strong>Localhost:</strong> Allowed with valid API key</li>
+          <li><strong>Remote:</strong> Requires IP whitelist + API key</li>
+          <li><strong>Public internet:</strong> Always blocked</li>
         </ul>
-        <p>This ensures admin endpoints are <strong>never publicly accessible</strong> - only from trusted IPs.</p>
+        <p>Admin endpoints are <strong>never publicly accessible</strong> - localhost or whitelisted IPs only.</p>
       </div>
     </div>
   </div>

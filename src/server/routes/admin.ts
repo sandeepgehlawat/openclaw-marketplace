@@ -7,8 +7,7 @@ const router = Router();
 
 // Admin configuration from environment
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY;
-const ADMIN_ALLOWED_IPS = process.env.ADMIN_ALLOWED_IPS?.split(",") || [];
-const ADMIN_ENABLED = process.env.ADMIN_ENABLED === "true";
+const ADMIN_ALLOWED_IPS = process.env.ADMIN_ALLOWED_IPS?.split(",").map(ip => ip.trim()).filter(Boolean) || [];
 
 // Check if IP is allowed (localhost or explicitly whitelisted)
 function isAllowedIP(ip: string | undefined): boolean {
@@ -25,51 +24,33 @@ function isAllowedIP(ip: string | undefined): boolean {
 }
 
 // Authentication middleware for admin routes
+// SECURITY: Requires BOTH IP whitelist AND API key - no exceptions
 function requireAdminAuth(req: Request, res: Response, next: NextFunction) {
   const clientIP = req.ip || req.socket.remoteAddress;
 
-  // Admin must be explicitly enabled in production
-  if (!ADMIN_ENABLED) {
-    // In development (localhost), allow without ADMIN_ENABLED
-    if (!isAllowedIP(clientIP)) {
-      console.warn(`Admin access denied - not enabled. IP: ${clientIP}`);
-      return res.status(403).json({
-        error: "Admin access denied",
-        message: "Admin endpoints are disabled. Set ADMIN_ENABLED=true and configure ADMIN_ALLOWED_IPS for production."
-      });
-    }
-  }
-
-  // Check IP whitelist (skip for localhost in dev)
-  if (ADMIN_ENABLED && !isAllowedIP(clientIP)) {
-    console.warn(`Admin access denied from non-whitelisted IP: ${clientIP}`);
-    return res.status(403).json({
-      error: "Access denied",
-      message: "Your IP is not authorized for admin access"
-    });
-  }
-
-  // If no admin key is configured, disable admin endpoints entirely
+  // CRITICAL: API key is ALWAYS required - no bypass
   if (!ADMIN_API_KEY) {
-    console.warn("ADMIN_API_KEY not configured - admin endpoints disabled");
     return res.status(503).json({
-      error: "Admin endpoints disabled",
-      message: "ADMIN_API_KEY environment variable not configured"
+      error: "Admin disabled"
     });
   }
 
+  // Check IP whitelist - localhost always allowed, others need whitelist
+  if (!isAllowedIP(clientIP)) {
+    console.warn(`Admin blocked: unauthorized IP ${clientIP}`);
+    return res.status(403).json({
+      error: "Access denied"
+    });
+  }
+
+  // Validate API key
   const apiKey = req.headers["x-admin-key"] || req.headers["authorization"]?.replace("Bearer ", "");
 
-  if (!apiKey) {
-    return res.status(401).json({
-      error: "Authentication required",
-      message: "Provide admin API key via X-Admin-Key header or Authorization: Bearer <key>"
+  if (!apiKey || apiKey !== ADMIN_API_KEY) {
+    console.warn(`Admin blocked: invalid key from ${clientIP}`);
+    return res.status(403).json({
+      error: "Access denied"
     });
-  }
-
-  if (apiKey !== ADMIN_API_KEY) {
-    console.warn(`Invalid admin API key attempt from ${clientIP}`);
-    return res.status(403).json({ error: "Invalid API key" });
   }
 
   next();
@@ -96,8 +77,7 @@ router.get("/stats", async (req: Request, res: Response) => {
       success: true,
       platform: {
         feePercent: feeInfo.percent,
-        wallet: feeInfo.wallet ? `${feeInfo.wallet.slice(0, 8)}...` : "Not configured",
-        walletFull: feeInfo.wallet || null,
+        walletConfigured: !!feeInfo.wallet,
       },
       stats: {
         totalJobs,
