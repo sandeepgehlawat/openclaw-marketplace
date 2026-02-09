@@ -75,7 +75,8 @@ export function x402Paywall() {
       const result = await paymentService.verifyAndSubmitPayment(
         payment,
         job.workerWallet!,
-        job.bountyAtomic
+        job.bountyAtomic,
+        jobId // Pass jobId for earnings tracking
       );
 
       if (!result.success) {

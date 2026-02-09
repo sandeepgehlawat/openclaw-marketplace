@@ -5,9 +5,15 @@ import {
   transferUsdc,
   verifyUsdcTransfer,
 } from "../solana/usdc.js";
-import { USDC_MINT_DEVNET, SOLANA_NETWORK } from "../config/constants.js";
+import {
+  USDC_MINT_DEVNET,
+  SOLANA_NETWORK,
+  PLATFORM_WALLET,
+  PLATFORM_FEE_PERCENT,
+  calculateFees,
+} from "../config/constants.js";
 
-// x402 Payment Required response format
+// x402 Payment Required response format (with fee breakdown)
 export interface X402PaymentRequired {
   accepts: Array<{
     scheme: "exact";
@@ -16,6 +22,12 @@ export interface X402PaymentRequired {
     asset: string;
     payTo: string;
   }>;
+  // Extended info for multi-recipient payments
+  breakdown?: {
+    total: string;
+    worker: { address: string; amount: string };
+    platform: { address: string; amount: string; percent: number };
+  };
 }
 
 // x402 Payment header format
@@ -27,24 +39,67 @@ export interface X402Payment {
 export interface X402PaymentResponse {
   txSig: string;
   success: boolean;
+  breakdown?: {
+    workerAmount: string;
+    platformFee: string;
+  };
 }
 
+// Platform earnings tracking (in-memory)
+const platformEarnings: Array<{
+  jobId: string;
+  amount: bigint;
+  txSig: string;
+  timestamp: Date;
+}> = [];
+
 export class PaymentService {
-  // Generate 402 Payment Required response
+  // Generate 402 Payment Required response with fee breakdown
   generatePaymentRequired(
-    recipientWallet: string,
-    amountAtomic: bigint
+    workerWallet: string,
+    totalAtomic: bigint
   ): X402PaymentRequired {
+    const { workerAmount, platformFee } = calculateFees(totalAtomic);
+    const hasPlatformWallet = PLATFORM_WALLET && PLATFORM_WALLET.length > 30;
+
+    // If no platform wallet configured, all goes to worker
+    if (!hasPlatformWallet) {
+      return {
+        accepts: [
+          {
+            scheme: "exact",
+            network: `solana-${SOLANA_NETWORK}`,
+            maxAmountRequired: totalAtomic.toString(),
+            asset: USDC_MINT_DEVNET.toBase58(),
+            payTo: workerWallet,
+          },
+        ],
+      };
+    }
+
+    // With platform fee
     return {
       accepts: [
         {
           scheme: "exact",
           network: `solana-${SOLANA_NETWORK}`,
-          maxAmountRequired: amountAtomic.toString(),
+          maxAmountRequired: totalAtomic.toString(),
           asset: USDC_MINT_DEVNET.toBase58(),
-          payTo: recipientWallet,
+          payTo: workerWallet, // Primary recipient for simple clients
         },
       ],
+      breakdown: {
+        total: totalAtomic.toString(),
+        worker: {
+          address: workerWallet,
+          amount: workerAmount.toString(),
+        },
+        platform: {
+          address: PLATFORM_WALLET,
+          amount: platformFee.toString(),
+          percent: PLATFORM_FEE_PERCENT,
+        },
+      },
     };
   }
 
@@ -65,10 +120,13 @@ export class PaymentService {
   // Verify and submit a payment transaction
   async verifyAndSubmitPayment(
     payment: X402Payment,
-    expectedRecipient: string,
-    expectedAmountAtomic: bigint
+    workerWallet: string,
+    totalAtomic: bigint,
+    jobId?: string
   ): Promise<X402PaymentResponse> {
     const conn = getConnection();
+    const { workerAmount, platformFee } = calculateFees(totalAtomic);
+    const hasPlatformWallet = PLATFORM_WALLET && PLATFORM_WALLET.length > 30;
 
     try {
       // Deserialize the transaction
@@ -84,26 +142,57 @@ export class PaymentService {
       // Wait for confirmation
       await conn.confirmTransaction(txSig, "confirmed");
 
-      // Verify the transfer was correct
+      // Verify the worker received payment
+      // For now, accept either full amount OR worker amount (for split payments)
+      const minAcceptable = hasPlatformWallet ? workerAmount : totalAtomic;
+
       const verified = await verifyUsdcTransfer(
         txSig,
-        "", // We don't need to verify sender
-        expectedRecipient,
-        expectedAmountAtomic
+        "",
+        workerWallet,
+        minAcceptable
       );
 
       if (!verified) {
         return { txSig, success: false };
       }
 
-      return { txSig, success: true };
+      // Track platform earnings if platform wallet is configured
+      if (hasPlatformWallet && platformFee > 0n && jobId) {
+        // Check if platform also received its share
+        const platformReceived = await verifyUsdcTransfer(
+          txSig,
+          "",
+          PLATFORM_WALLET,
+          platformFee
+        );
+
+        if (platformReceived) {
+          platformEarnings.push({
+            jobId,
+            amount: platformFee,
+            txSig,
+            timestamp: new Date(),
+          });
+          console.log(`Platform earned ${platformFee} atomic units from job ${jobId}`);
+        }
+      }
+
+      return {
+        txSig,
+        success: true,
+        breakdown: {
+          workerAmount: workerAmount.toString(),
+          platformFee: platformFee.toString(),
+        },
+      };
     } catch (error) {
       console.error("Payment verification failed:", error);
       throw error;
     }
   }
 
-  // Build a payment transaction for a client
+  // Build a payment transaction for a client (with optional platform fee)
   async buildPaymentTx(
     senderPubkey: string,
     recipientWallet: string,
@@ -128,6 +217,28 @@ export class PaymentService {
 
   encodePaymentResponse(response: X402PaymentResponse): string {
     return Buffer.from(JSON.stringify(response)).toString("base64");
+  }
+
+  // Get platform earnings summary
+  getPlatformEarnings(): {
+    total: bigint;
+    count: number;
+    transactions: typeof platformEarnings;
+  } {
+    const total = platformEarnings.reduce((sum, e) => sum + e.amount, 0n);
+    return {
+      total,
+      count: platformEarnings.length,
+      transactions: platformEarnings,
+    };
+  }
+
+  // Get fee info
+  getFeeInfo(): { percent: number; wallet: string | null } {
+    return {
+      percent: PLATFORM_FEE_PERCENT,
+      wallet: PLATFORM_WALLET || null,
+    };
   }
 }
 

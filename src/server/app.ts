@@ -4,6 +4,7 @@ import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import jobsRouter from "./routes/jobs.js";
 import resultsRouter from "./routes/results.js";
+import adminRouter from "./routes/admin.js";
 import { wsHub } from "./websocket/hub.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -67,6 +68,7 @@ export function createApp(): Application {
   // API routes
   app.use("/api/v1/jobs", jobsRouter);
   app.use("/api/v1/results", resultsRouter);
+  app.use("/api/v1/admin", adminRouter);
 
   // 404 handler - serve dashboard for non-API routes, JSON for API routes
   app.use((req: Request, res: Response) => {

@@ -26,6 +26,18 @@ export function atomicToUsdc(atomic: bigint): number {
 export const PORT = parseInt(process.env.PORT || "3000", 10);
 export const HOST = process.env.HOST || "0.0.0.0";
 
+// Platform fee config
+export const PLATFORM_FEE_PERCENT = parseFloat(process.env.PLATFORM_FEE_PERCENT || "5"); // 5% default
+export const PLATFORM_WALLET = process.env.PLATFORM_WALLET || ""; // Your wallet to receive fees
+
+// Calculate fee from amount
+export function calculateFees(totalAtomic: bigint): { workerAmount: bigint; platformFee: bigint } {
+  const feePercent = BigInt(Math.round(PLATFORM_FEE_PERCENT * 100)); // Convert to basis points
+  const platformFee = (totalAtomic * feePercent) / 10000n;
+  const workerAmount = totalAtomic - platformFee;
+  return { workerAmount, platformFee };
+}
+
 // Job status
 export enum JobStatus {
   OPEN = "open",
