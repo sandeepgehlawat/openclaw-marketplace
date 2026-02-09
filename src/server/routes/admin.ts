@@ -1,7 +1,7 @@
 import { Router, Request, Response } from "express";
 import { paymentService } from "../../services/payment-service.js";
 import { jobService } from "../../services/job-service.js";
-import { atomicToUsdc, PLATFORM_FEE_PERCENT, PLATFORM_WALLET } from "../../config/constants.js";
+import { atomicToUsdc, PLATFORM_FEE_PERCENT, PLATFORM_WALLET, JobStatus } from "../../config/constants.js";
 
 const router = Router();
 
@@ -90,6 +90,104 @@ router.get("/fee-info", async (req: Request, res: Response) => {
       platformReceives: (1.0 * feeInfo.percent) / 100,
     },
   });
+});
+
+// GET /api/v1/admin/results - View all completed job results (admin only)
+router.get("/results", async (req: Request, res: Response) => {
+  try {
+    const jobs = jobService.list();
+    const completedJobs = jobs.filter(
+      (j) => j.status === JobStatus.COMPLETED || j.status === JobStatus.PAID
+    );
+
+    const results = completedJobs.map((job) => {
+      const result = jobService.getResult(job.id);
+      return {
+        jobId: job.id,
+        title: job.title,
+        status: job.status,
+        bountyUsdc: job.bountyUsdc,
+        worker: job.workerWallet,
+        completedAt: job.completedAt,
+        paidAt: job.paidAt,
+        result: result?.result || null,
+      };
+    });
+
+    res.json({
+      success: true,
+      count: results.length,
+      results,
+    });
+  } catch (error) {
+    console.error("Error fetching results:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// GET /api/v1/admin/results/:jobId - View specific job result (admin only)
+router.get("/results/:jobId", async (req: Request<{ jobId: string }>, res: Response) => {
+  try {
+    const jobId = req.params.jobId;
+    const job = jobService.get(jobId);
+
+    if (!job) {
+      return res.status(404).json({ error: "Job not found" });
+    }
+
+    const result = jobService.getResult(jobId);
+
+    res.json({
+      success: true,
+      job: {
+        id: job.id,
+        title: job.title,
+        description: job.description,
+        status: job.status,
+        bountyUsdc: job.bountyUsdc,
+        requester: job.requesterWallet,
+        worker: job.workerWallet,
+        createdAt: job.createdAt,
+        claimedAt: job.claimedAt,
+        completedAt: job.completedAt,
+        paidAt: job.paidAt,
+        paymentTxSig: job.paymentTxSig,
+      },
+      result: result?.result || null,
+    });
+  } catch (error) {
+    console.error("Error fetching result:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// GET /api/v1/admin/jobs - List all jobs with full details
+router.get("/jobs", async (req: Request, res: Response) => {
+  try {
+    const jobs = jobService.list();
+
+    res.json({
+      success: true,
+      count: jobs.length,
+      jobs: jobs.map((job) => ({
+        id: job.id,
+        title: job.title,
+        description: job.description,
+        status: job.status,
+        bountyUsdc: job.bountyUsdc,
+        requester: job.requesterWallet,
+        worker: job.workerWallet,
+        tags: job.tags,
+        createdAt: job.createdAt,
+        claimedAt: job.claimedAt,
+        completedAt: job.completedAt,
+        paidAt: job.paidAt,
+      })),
+    });
+  } catch (error) {
+    console.error("Error fetching jobs:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
 });
 
 export default router;
