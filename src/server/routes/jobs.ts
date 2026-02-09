@@ -201,6 +201,16 @@ router.post("/:id/cancel", async (req: Request<{ id: string }>, res: Response) =
   }
 });
 
+// GET /api/v1/jobs/config - Get marketplace config (escrow wallet, etc.)
+router.get("/config", async (req: Request, res: Response) => {
+  res.json({
+    success: true,
+    escrowWallet: escrowService.getEscrowWallet(),
+    network: "solana-devnet",
+    usdcMint: "Gh9ZwEmdLJ8DscKNTkTqPbNwLNNBjuSzaG9Vp2KGtKJr",
+  });
+});
+
 // GET /api/v1/jobs - List jobs
 router.get("/", async (req: Request, res: Response) => {
   try {

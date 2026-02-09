@@ -976,6 +976,13 @@
   <main class="main">
     <div class="stats">
       <div class="stat-card">
+        <div class="stat-label">Pending Deposit</div>
+        <div class="stat-row">
+          <div class="stat-value yellow" id="statPending">0</div>
+          <div class="stat-unit">jobs</div>
+        </div>
+      </div>
+      <div class="stat-card">
         <div class="stat-label">Open</div>
         <div class="stat-row">
           <div class="stat-value green" id="statOpen">0</div>
@@ -985,14 +992,7 @@
       <div class="stat-card">
         <div class="stat-label">In Progress</div>
         <div class="stat-row">
-          <div class="stat-value yellow" id="statClaimed">0</div>
-          <div class="stat-unit">jobs</div>
-        </div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">Completed</div>
-        <div class="stat-row">
-          <div class="stat-value blue" id="statCompleted">0</div>
+          <div class="stat-value blue" id="statClaimed">0</div>
           <div class="stat-unit">jobs</div>
         </div>
       </div>
@@ -1011,6 +1011,7 @@
         <button class="btn-post" onclick="openPostModal()">+ Post Job</button>
         <div class="tabs">
           <button class="tab active" data-filter="all">All</button>
+          <button class="tab" data-filter="pending_deposit">Pending</button>
           <button class="tab" data-filter="open">Open</button>
           <button class="tab" data-filter="claimed">Active</button>
           <button class="tab" data-filter="completed">Done</button>
@@ -1233,14 +1234,14 @@
     }
 
     function updateStats() {
-      const counts = { open: 0, claimed: 0, completed: 0, paid: 0, paidUsdc: 0 };
+      const counts = { pending_deposit: 0, open: 0, claimed: 0, completed: 0, paid: 0, paidUsdc: 0 };
       jobs.forEach(j => {
         if (counts[j.status] !== undefined) counts[j.status]++;
         if (j.status === 'paid') counts.paidUsdc += j.bountyUsdc;
       });
+      document.getElementById('statPending').textContent = counts.pending_deposit;
       document.getElementById('statOpen').textContent = counts.open;
       document.getElementById('statClaimed').textContent = counts.claimed;
-      document.getElementById('statCompleted').textContent = counts.completed;
       document.getElementById('statPaid').textContent = counts.paidUsdc.toFixed(2);
     }
 
@@ -1255,19 +1256,64 @@
       });
     }
 
+    let escrowWallet = null;
+
+    async function getEscrowWallet() {
+      if (escrowWallet) return escrowWallet;
+      try {
+        const res = await fetch('/api/v1/jobs/config');
+        const data = await res.json();
+        escrowWallet = data.escrowWallet;
+        return escrowWallet;
+      } catch (err) {
+        console.error('Failed to get escrow config:', err);
+        return null;
+      }
+    }
+
     async function showJob(jobId) {
       const job = jobs.find(j => j.id === jobId);
       if (!job) return;
 
-      let resultHtml = '';
+      let extraHtml = '';
+
+      // Show escrow deposit instructions for pending jobs
+      if (job.status === 'pending_deposit') {
+        const wallet = await getEscrowWallet();
+        if (wallet) {
+          extraHtml = `
+            <div class="escrow-info" style="margin-top:16px">
+              <h4>Deposit Required to Activate Job</h4>
+              <div class="escrow-row">
+                <span class="escrow-label">Send Amount</span>
+                <span class="escrow-value" style="color:var(--green)">${job.bountyUsdc} USDC</span>
+              </div>
+              <div class="escrow-row">
+                <span class="escrow-label">To Escrow Wallet</span>
+                <span class="escrow-value" style="font-size:10px">${wallet}</span>
+              </div>
+              <div class="escrow-row">
+                <span class="escrow-label">Network</span>
+                <span class="escrow-value">Solana Devnet</span>
+              </div>
+              <p style="margin-top:12px;font-size:12px;color:var(--text-muted)">
+                After sending USDC, call <code style="background:var(--bg);padding:2px 6px;border-radius:4px">POST /api/v1/jobs/${job.id}/deposit</code> with your transaction signature to activate the job.
+              </p>
+              <button class="btn-submit" style="margin-top:12px" onclick="copyEscrowWallet('${wallet}')">Copy Escrow Wallet</button>
+            </div>
+          `;
+        }
+      }
+
+      // Show result for completed/paid jobs
       if (job.status === 'completed' || job.status === 'paid') {
         try {
           const res = await fetch(`/api/v1/results/${jobId}`);
           if (res.status === 402) {
-            resultHtml = `<div class="result-locked">🔒 Result available after payment</div>`;
+            extraHtml = `<div class="result-locked">🔒 Result available after payment</div>`;
           } else if (res.ok) {
             const data = await res.json();
-            resultHtml = `<div class="result-box">${esc(data.result)}</div>`;
+            extraHtml = `<div class="result-box">${esc(data.result)}</div>`;
           }
         } catch (err) {}
       }
@@ -1281,10 +1327,24 @@
         <div class="detail-row"><span class="detail-label">Requester</span><span class="detail-value mono">${truncate(job.requesterWallet)}</span></div>
         <div class="detail-row"><span class="detail-label">Worker</span><span class="detail-value mono">${job.workerWallet ? truncate(job.workerWallet) : '—'}</span></div>
         <div class="detail-row"><span class="detail-label">Created</span><span class="detail-value">${new Date(job.createdAt).toLocaleString()}</span></div>
-        ${job.paymentTxSig ? `<div class="detail-row"><span class="detail-label">Payment</span><a href="https://explorer.solana.com/tx/${job.paymentTxSig}?cluster=devnet" target="_blank" class="detail-value" style="color:var(--accent)">${truncate(job.paymentTxSig)}</a></div>` : ''}
-        ${resultHtml}
+        ${job.depositTxSig ? `<div class="detail-row"><span class="detail-label">Deposit TX</span><a href="https://explorer.solana.com/tx/${job.depositTxSig}?cluster=devnet" target="_blank" class="detail-value" style="color:var(--accent)">${truncate(job.depositTxSig)}</a></div>` : ''}
+        ${job.paymentTxSig ? `<div class="detail-row"><span class="detail-label">Payment TX</span><a href="https://explorer.solana.com/tx/${job.paymentTxSig}?cluster=devnet" target="_blank" class="detail-value" style="color:var(--accent)">${truncate(job.paymentTxSig)}</a></div>` : ''}
+        ${extraHtml}
       `;
       document.getElementById('modalBackdrop').classList.add('active');
+    }
+
+    function copyEscrowWallet(wallet) {
+      navigator.clipboard.writeText(wallet).then(() => {
+        const btn = event.target;
+        const originalText = btn.textContent;
+        btn.textContent = 'Copied!';
+        btn.style.background = 'var(--green)';
+        setTimeout(() => {
+          btn.textContent = originalText;
+          btn.style.background = '';
+        }, 2000);
+      });
     }
 
     function closeModal() {
