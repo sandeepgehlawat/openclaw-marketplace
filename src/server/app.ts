@@ -9,6 +9,9 @@ import { wsHub } from "./websocket/hub.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
+// Public folder path (works in both dev and prod)
+const publicPath = join(__dirname, "../public");
+
 export function createApp(): Application {
   const app = express();
 
@@ -29,7 +32,8 @@ export function createApp(): Application {
   });
 
   // Serve static dashboard
-  app.use(express.static(join(__dirname, "../public")));
+  console.log("Serving static files from:", publicPath);
+  app.use(express.static(publicPath));
 
   // Health check
   app.get("/health", (req: Request, res: Response) => {
@@ -69,7 +73,17 @@ export function createApp(): Application {
     if (req.path.startsWith("/api/")) {
       res.status(404).json({ error: "Not found" });
     } else {
-      res.sendFile(join(__dirname, "../public/index.html"));
+      const indexPath = join(publicPath, "index.html");
+      res.sendFile(indexPath, (err) => {
+        if (err) {
+          console.error("Error serving index.html:", err);
+          res.status(200).json({
+            message: "OpenClaw Marketplace API",
+            docs: "/api",
+            health: "/health"
+          });
+        }
+      });
     }
   });
 
