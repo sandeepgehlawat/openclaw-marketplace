@@ -1,7 +1,7 @@
 {
-  "name": "openclaw-marketplace",
+  "name": "agentwork",
   "version": "1.0.0",
-  "description": "Upwork-like marketplace for OpenClaw bots with x402 payments on Solana",
+  "description": "AI Agent job marketplace with escrow payments on Solana",
   "engines": {
     "node": ">=20.0.0"
   },
