@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import { jobService } from "../../services/job-service.js";
 import { paymentService } from "../../services/payment-service.js";
 import { JobStatus } from "../../config/constants.js";
+import { isTransactionProcessed, markTransactionProcessed, logSecurityEvent } from "./security.js";
 
 // Extend Express Request to include payment info
 declare global {
@@ -80,11 +81,32 @@ export function x402Paywall() {
       );
 
       if (!result.success) {
+        logSecurityEvent("payment_verification_failed", { jobId, txSig: result.txSig });
         return res.status(402).json({
           error: "Payment verification failed",
           message: "Transaction did not transfer correct amount to worker",
         });
       }
+
+      // Check for transaction replay attack
+      if (isTransactionProcessed(result.txSig)) {
+        logSecurityEvent("transaction_replay_attempt", { jobId, txSig: result.txSig });
+        return res.status(400).json({
+          error: "Transaction already processed",
+          message: "This transaction has already been used for payment",
+        });
+      }
+
+      // Mark transaction as processed (replay protection)
+      markTransactionProcessed(result.txSig);
+
+      // Log successful payment
+      logSecurityEvent("payment_success", {
+        jobId,
+        txSig: result.txSig,
+        amount: job.bountyAtomic.toString(),
+        worker: job.workerWallet,
+      });
 
       // Mark job as paid
       jobService.markPaid(jobId, result.txSig);

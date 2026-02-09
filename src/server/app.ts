@@ -6,6 +6,7 @@ import jobsRouter from "./routes/jobs.js";
 import resultsRouter from "./routes/results.js";
 import adminRouter from "./routes/admin.js";
 import { wsHub } from "./websocket/hub.js";
+import { rateLimit, requestId, securityHeaders } from "./middleware/security.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -15,6 +16,11 @@ const publicPath = join(__dirname, "../public");
 
 export function createApp(): Application {
   const app = express();
+
+  // Security middleware
+  app.use(securityHeaders());
+  app.use(requestId());
+  app.use(rateLimit());
 
   // Middleware
   app.use(cors());
