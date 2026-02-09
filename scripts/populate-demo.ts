@@ -165,15 +165,16 @@ async function main() {
     if (result) {
       console.log(`✓ ${result.id}`);
 
-      // Activate using demo mode (no real USDC needed)
-      process.stdout.write(`  Activating (demo mode)... `);
+      // Fund with real USDC
+      process.stdout.write(`  Depositing ${job.bounty} USDC... `);
       try {
-        const activated = await activateDemo(result.id);
-        if (activated) {
+        const txSig = await sendUsdc(new PublicKey(result.escrowTo), job.bounty);
+        const deposited = await depositEscrow(result.id, txSig);
+        if (deposited) {
           console.log('✓');
           createdJobs.push({ id: result.id, title: job.title, bounty: job.bounty });
         } else {
-          console.log('✗ activation failed');
+          console.log('✗ deposit verification failed');
         }
       } catch (e: any) {
         console.log(`✗ ${e.message?.slice(0, 40) || e}`);

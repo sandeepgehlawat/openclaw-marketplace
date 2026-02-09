@@ -2,7 +2,7 @@ import { PublicKey, Keypair, Transaction } from "@solana/web3.js";
 import { getConnection, loadWallet } from "../solana/client.js";
 import { verifyUsdcTransfer } from "../solana/usdc.js";
 import { PLATFORM_WALLET, PLATFORM_FEE_PERCENT, calculateFees, USDC_MINT_DEVNET } from "../config/constants.js";
-import { createTransferInstruction, getAssociatedTokenAddress } from "@solana/spl-token";
+import { createTransferInstruction, getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, getAccount } from "@solana/spl-token";
 import { query, queryOne } from "../db/index.js";
 
 const ESCROW_WALLET = process.env.ESCROW_WALLET || PLATFORM_WALLET;
@@ -145,6 +145,20 @@ export class EscrowService {
 
       const workerPubkey = new PublicKey(workerWallet);
       const workerAta = await getAssociatedTokenAddress(USDC_MINT_DEVNET, workerPubkey);
+
+      // Create worker ATA if it doesn't exist
+      try {
+        await getAccount(conn, workerAta);
+      } catch {
+        tx.add(
+          createAssociatedTokenAccountInstruction(
+            this.escrowKeypair.publicKey,
+            workerAta,
+            workerPubkey,
+            USDC_MINT_DEVNET
+          )
+        );
+      }
 
       tx.add(
         createTransferInstruction(

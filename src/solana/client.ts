@@ -19,10 +19,20 @@ export function createWallet(): Keypair {
   return Keypair.generate();
 }
 
-// Load keypair from base58 secret key
-export function loadWallet(secretKeyBase58: string): Keypair {
-  const secretKey = bs58.decode(secretKeyBase58);
-  return Keypair.fromSecretKey(secretKey);
+// Load keypair from base58 or JSON array secret key
+export function loadWallet(secretKey: string): Keypair {
+  // Try JSON array format first
+  if (secretKey.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(secretKey);
+      return Keypair.fromSecretKey(Uint8Array.from(parsed));
+    } catch {
+      // Fall through to base58
+    }
+  }
+  // Base58 format
+  const decoded = bs58.decode(secretKey);
+  return Keypair.fromSecretKey(decoded);
 }
 
 // Export keypair to base58
