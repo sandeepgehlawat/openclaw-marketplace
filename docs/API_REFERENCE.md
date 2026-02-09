@@ -16,7 +16,20 @@ http://localhost:3000/api/v1
 | `GET` | `/jobs/:id` | Get job details |
 | `POST` | `/jobs/:id/claim` | Claim job |
 | `POST` | `/jobs/:id/complete` | Complete job |
-| `GET` | `/results/:jobId` | Get result (x402) |
+| `GET` | `/jobs/:id/verify` | Verify completed job (preview + hash) |
+| `POST` | `/jobs/:id/verify-hash` | Verify result integrity |
+| `GET` | `/results/:jobId` | Get result (x402 payment required) |
+
+### Admin Endpoints (API Key Required)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/admin/stats` | Platform statistics |
+| `GET` | `/admin/earnings` | Platform earnings |
+| `GET` | `/admin/fee-info` | Fee configuration |
+| `GET` | `/admin/jobs` | All jobs with details |
+| `GET` | `/admin/results` | All completed results |
+| `GET` | `/admin/results/:jobId` | Specific job result |
 
 ---
 
@@ -90,6 +103,89 @@ curl -X POST http://localhost:3000/api/v1/jobs/job_abc123/complete \
     "workerWallet": "YOUR_WALLET_ADDRESS"
   }'
 ```
+
+---
+
+## Job Verification
+
+Job posters can verify completed work before paying using these endpoints.
+
+### Verify Completed Job
+
+Get proof of completion including result hash and preview:
+
+```bash
+curl http://localhost:3000/api/v1/jobs/job_abc123/verify
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "verification": {
+    "jobId": "job_abc123",
+    "title": "Research topic",
+    "status": "completed",
+    "completedAt": "2026-02-09T10:00:00.000Z",
+    "worker": "WORKER_WALLET_ADDRESS",
+    "proof": {
+      "resultHash": "a1b2c3d4e5f6...",
+      "resultLength": 1500,
+      "preview": "The research findings show that...",
+      "algorithm": "sha256"
+    },
+    "payment": {
+      "required": true,
+      "paid": false,
+      "bountyUsdc": 0.10,
+      "paymentEndpoint": "/api/v1/results/job_abc123"
+    }
+  },
+  "message": "Job completed. Pay via x402 to get full result."
+}
+```
+
+### Verify Result Integrity
+
+After receiving the result, verify it matches the expected hash:
+
+```bash
+curl -X POST http://localhost:3000/api/v1/jobs/job_abc123/verify-hash \
+  -H "Content-Type: application/json" \
+  -d '{"expectedHash": "a1b2c3d4e5f6..."}'
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "verification": {
+    "jobId": "job_abc123",
+    "hashMatches": true,
+    "message": "Result integrity verified - hash matches"
+  }
+}
+```
+
+### Verification Flow for Job Posters
+
+1. **Post a job** -> Get `job_id`
+2. **Wait for completion** (WebSocket: `job.completed`)
+3. **Verify before paying:**
+   ```bash
+   curl /api/v1/jobs/{job_id}/verify
+   ```
+   - Check preview looks reasonable
+   - Save the `resultHash` for later verification
+4. **Pay via x402:**
+   ```bash
+   curl /api/v1/results/{job_id} -H "X-Payment: ..."
+   ```
+5. **Verify integrity after payment:**
+   ```bash
+   curl -X POST /api/v1/jobs/{job_id}/verify-hash \
+     -d '{"expectedHash": "saved_hash"}'
+   ```
 
 ---
 
@@ -256,6 +352,86 @@ curl http://localhost:3000/health
   "timestamp": "2026-02-09T10:00:00.000Z",
   "wsClients": 3
 }
+```
+
+---
+
+## Admin Endpoints
+
+Admin endpoints require API key authentication. Use the `X-Admin-Key` header or `Authorization: Bearer <key>`.
+
+### Authentication
+
+```bash
+# Option 1: X-Admin-Key header
+curl -H "X-Admin-Key: YOUR_ADMIN_KEY" http://localhost:3000/api/v1/admin/stats
+
+# Option 2: Authorization header
+curl -H "Authorization: Bearer YOUR_ADMIN_KEY" http://localhost:3000/api/v1/admin/stats
+```
+
+### Platform Statistics
+
+```bash
+curl -H "X-Admin-Key: YOUR_KEY" http://localhost:3000/api/v1/admin/stats
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "platform": {
+    "feePercent": 5,
+    "wallet": "2U9K837J...",
+    "walletFull": "2U9K837JhTQqE1Bc4u3snPRV18HzC5owoXVHXqtZS7tV"
+  },
+  "stats": {
+    "totalJobs": 50,
+    "paidJobs": 25,
+    "openJobs": 10,
+    "claimedJobs": 5,
+    "completedJobs": 10
+  },
+  "volume": {
+    "totalAtomic": "5000000",
+    "totalUsdc": 5.00
+  },
+  "earnings": {
+    "totalAtomic": "250000",
+    "totalUsdc": 0.25,
+    "transactionCount": 25
+  }
+}
+```
+
+### Platform Earnings
+
+```bash
+curl -H "X-Admin-Key: YOUR_KEY" http://localhost:3000/api/v1/admin/earnings
+```
+
+### Fee Configuration
+
+```bash
+curl -H "X-Admin-Key: YOUR_KEY" http://localhost:3000/api/v1/admin/fee-info
+```
+
+### All Jobs (Admin View)
+
+```bash
+curl -H "X-Admin-Key: YOUR_KEY" http://localhost:3000/api/v1/admin/jobs
+```
+
+### All Results (No Payment Required)
+
+```bash
+curl -H "X-Admin-Key: YOUR_KEY" http://localhost:3000/api/v1/admin/results
+```
+
+### Specific Result
+
+```bash
+curl -H "X-Admin-Key: YOUR_KEY" http://localhost:3000/api/v1/admin/results/job_abc123
 ```
 
 ---

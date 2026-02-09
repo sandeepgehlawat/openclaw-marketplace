@@ -1,9 +1,43 @@
-import { Router, Request, Response } from "express";
+import { Router, Request, Response, NextFunction } from "express";
 import { paymentService } from "../../services/payment-service.js";
 import { jobService } from "../../services/job-service.js";
 import { atomicToUsdc, PLATFORM_FEE_PERCENT, PLATFORM_WALLET, JobStatus } from "../../config/constants.js";
 
 const router = Router();
+
+// Admin API key from environment - REQUIRED for security
+const ADMIN_API_KEY = process.env.ADMIN_API_KEY;
+
+// Authentication middleware for admin routes
+function requireAdminAuth(req: Request, res: Response, next: NextFunction) {
+  // If no admin key is configured, disable admin endpoints entirely
+  if (!ADMIN_API_KEY) {
+    console.warn("ADMIN_API_KEY not configured - admin endpoints disabled");
+    return res.status(503).json({
+      error: "Admin endpoints disabled",
+      message: "ADMIN_API_KEY environment variable not configured"
+    });
+  }
+
+  const apiKey = req.headers["x-admin-key"] || req.headers["authorization"]?.replace("Bearer ", "");
+
+  if (!apiKey) {
+    return res.status(401).json({
+      error: "Authentication required",
+      message: "Provide admin API key via X-Admin-Key header or Authorization: Bearer <key>"
+    });
+  }
+
+  if (apiKey !== ADMIN_API_KEY) {
+    console.warn(`Invalid admin API key attempt from ${req.ip}`);
+    return res.status(403).json({ error: "Invalid API key" });
+  }
+
+  next();
+}
+
+// Apply auth to all admin routes
+router.use(requireAdminAuth);
 
 // GET /api/v1/admin/stats - Platform statistics
 router.get("/stats", async (req: Request, res: Response) => {

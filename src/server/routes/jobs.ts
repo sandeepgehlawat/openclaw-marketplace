@@ -1,9 +1,15 @@
 import { Router, Request, Response } from "express";
+import { createHash } from "crypto";
 import { jobService } from "../../services/job-service.js";
 import { CreateJobSchema, ClaimJobSchema, CompleteJobSchema } from "../../models/job.js";
 import { JobStatus } from "../../config/constants.js";
 import { wsHub } from "../websocket/hub.js";
 import { ZodError } from "zod";
+
+// Helper to create result hash for verification
+function hashResult(result: string): string {
+  return createHash("sha256").update(result).digest("hex");
+}
 
 const router = Router();
 
@@ -146,6 +152,102 @@ router.post("/:id/complete", async (req: Request<{ id: string }>, res: Response)
     if (error instanceof Error) {
       return res.status(400).json({ error: error.message });
     }
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// GET /api/v1/jobs/:id/verify - Verify completed job (for job poster)
+// Allows requester to see proof of completion before paying
+router.get("/:id/verify", async (req: Request<{ id: string }>, res: Response) => {
+  try {
+    const job = jobService.get(req.params.id);
+    if (!job) {
+      return res.status(404).json({ error: "Job not found" });
+    }
+
+    // Check if job is completed or paid
+    if (job.status !== JobStatus.COMPLETED && job.status !== JobStatus.PAID) {
+      return res.status(400).json({
+        error: "Job not completed",
+        status: job.status,
+        message: "Verification only available for completed jobs"
+      });
+    }
+
+    // Get the result
+    const resultData = jobService.getResult(job.id);
+    if (!resultData) {
+      return res.status(404).json({ error: "Result not found" });
+    }
+
+    // Create verification proof
+    const resultHash = hashResult(resultData.result);
+    const preview = resultData.result.substring(0, 100) + (resultData.result.length > 100 ? "..." : "");
+
+    res.json({
+      success: true,
+      verification: {
+        jobId: job.id,
+        title: job.title,
+        status: job.status,
+        completedAt: job.completedAt,
+        worker: job.workerWallet,
+        proof: {
+          resultHash: resultHash,
+          resultLength: resultData.result.length,
+          preview: preview,
+          algorithm: "sha256"
+        },
+        payment: {
+          required: job.status === JobStatus.COMPLETED,
+          paid: job.status === JobStatus.PAID,
+          bountyUsdc: job.bountyUsdc,
+          paymentEndpoint: `/api/v1/results/${job.id}`
+        }
+      },
+      message: job.status === JobStatus.COMPLETED
+        ? "Job completed. Pay via x402 to get full result. Hash can be used to verify result integrity after payment."
+        : "Job paid. Full result available at payment endpoint."
+    });
+  } catch (error) {
+    console.error("Error verifying job:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// POST /api/v1/jobs/:id/verify-hash - Verify result matches expected hash
+router.post("/:id/verify-hash", async (req: Request<{ id: string }>, res: Response) => {
+  try {
+    const { expectedHash } = req.body;
+    if (!expectedHash) {
+      return res.status(400).json({ error: "expectedHash required in body" });
+    }
+
+    const job = jobService.get(req.params.id);
+    if (!job) {
+      return res.status(404).json({ error: "Job not found" });
+    }
+
+    const resultData = jobService.getResult(job.id);
+    if (!resultData) {
+      return res.status(404).json({ error: "Result not found" });
+    }
+
+    const actualHash = hashResult(resultData.result);
+    const matches = actualHash === expectedHash;
+
+    res.json({
+      success: true,
+      verification: {
+        jobId: job.id,
+        hashMatches: matches,
+        message: matches
+          ? "Result integrity verified - hash matches"
+          : "Hash mismatch - result may have been tampered with"
+      }
+    });
+  } catch (error) {
+    console.error("Error verifying hash:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });
