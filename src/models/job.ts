@@ -1,13 +1,14 @@
 import { z } from "zod";
 import { v4 as uuidv4 } from "uuid";
 import { JobStatus } from "../config/constants.js";
+import { query, queryOne } from "../db/index.js";
 
 // Job schema for validation
 export const CreateJobSchema = z.object({
   title: z.string().min(1).max(200),
   description: z.string().min(1).max(5000),
-  bountyUsdc: z.number().positive().max(1000), // Max 1000 USDC
-  requesterWallet: z.string().min(32).max(44), // Solana pubkey
+  bountyUsdc: z.number().positive().max(1000),
+  requesterWallet: z.string().min(32).max(44),
   tags: z.array(z.string()).optional().default([]),
 });
 
@@ -16,7 +17,7 @@ export const ClaimJobSchema = z.object({
 });
 
 export const CompleteJobSchema = z.object({
-  result: z.string().min(1).max(100000), // Result data
+  result: z.string().min(1).max(100000),
   workerWallet: z.string().min(32).max(44),
 });
 
@@ -24,7 +25,7 @@ export type CreateJobInput = z.infer<typeof CreateJobSchema>;
 export type ClaimJobInput = z.infer<typeof ClaimJobSchema>;
 export type CompleteJobInput = z.infer<typeof CompleteJobSchema>;
 
-// Job model (with escrow support)
+// Job model
 export interface Job {
   id: string;
   title: string;
@@ -40,14 +41,12 @@ export interface Job {
   completedAt: Date | null;
   paidAt: Date | null;
   paymentTxSig: string | null;
-  // Escrow fields
   escrowDepositTx: string | null;
   escrowVerifiedAt: Date | null;
   escrowReleaseTx: string | null;
   expiresAt: Date | null;
 }
 
-// Result model (stored separately for x402 paywall)
 export interface JobResult {
   jobId: string;
   result: string;
@@ -55,169 +54,172 @@ export interface JobResult {
   submittedAt: Date;
 }
 
-// In-memory stores
-const jobs = new Map<string, Job>();
-const results = new Map<string, JobResult>();
+// Convert DB row to Job object
+function rowToJob(row: any): Job {
+  return {
+    id: row.id,
+    title: row.title,
+    description: row.description,
+    bountyUsdc: parseFloat(row.bounty_usdc),
+    bountyAtomic: BigInt(row.bounty_atomic),
+    requesterWallet: row.requester_wallet,
+    workerWallet: row.worker_wallet,
+    status: row.status as JobStatus,
+    tags: [], // Tags not stored in DB for simplicity
+    createdAt: new Date(row.created_at),
+    claimedAt: row.claimed_at ? new Date(row.claimed_at) : null,
+    completedAt: row.completed_at ? new Date(row.completed_at) : null,
+    paidAt: row.paid_at ? new Date(row.paid_at) : null,
+    paymentTxSig: row.payment_tx_sig,
+    escrowDepositTx: row.deposit_tx_sig,
+    escrowVerifiedAt: row.deposit_tx_sig ? new Date(row.created_at) : null,
+    escrowReleaseTx: row.payment_tx_sig,
+    expiresAt: null,
+  };
+}
 
-// Job expiry time (24 hours by default)
-const JOB_EXPIRY_MS = 24 * 60 * 60 * 1000;
-
-// CRUD operations
-export function createJob(input: CreateJobInput): Job {
+// CRUD operations (async for PostgreSQL)
+export async function createJob(input: CreateJobInput): Promise<Job> {
   const id = `job_${uuidv4().slice(0, 8)}`;
   const bountyAtomic = BigInt(Math.round(input.bountyUsdc * 1e6));
-  const now = new Date();
 
-  const job: Job = {
-    id,
-    title: input.title,
-    description: input.description,
-    bountyUsdc: input.bountyUsdc,
-    bountyAtomic,
-    requesterWallet: input.requesterWallet,
-    workerWallet: null,
-    status: JobStatus.PENDING_DEPOSIT, // Start in pending until escrow verified
-    tags: input.tags || [],
-    createdAt: now,
-    claimedAt: null,
-    completedAt: null,
-    paidAt: null,
-    paymentTxSig: null,
-    // Escrow fields
-    escrowDepositTx: null,
-    escrowVerifiedAt: null,
-    escrowReleaseTx: null,
-    expiresAt: new Date(now.getTime() + JOB_EXPIRY_MS),
-  };
+  const rows = await query<any>(
+    `INSERT INTO jobs (id, title, description, bounty_usdc, bounty_atomic, requester_wallet, status)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     RETURNING *`,
+    [id, input.title, input.description, input.bountyUsdc, bountyAtomic.toString(), input.requesterWallet, JobStatus.PENDING_DEPOSIT]
+  );
 
-  jobs.set(id, job);
-  return job;
+  return rowToJob(rows[0]);
 }
 
-// Activate job after escrow deposit verified
-export function activateJob(id: string, depositTxSig: string): Job | null {
-  const job = jobs.get(id);
-  if (!job || job.status !== JobStatus.PENDING_DEPOSIT) {
-    return null;
-  }
+export async function activateJob(id: string, depositTxSig: string): Promise<Job | null> {
+  const rows = await query<any>(
+    `UPDATE jobs
+     SET status = $1, deposit_tx_sig = $2
+     WHERE id = $3 AND status = $4
+     RETURNING *`,
+    [JobStatus.OPEN, depositTxSig, id, JobStatus.PENDING_DEPOSIT]
+  );
 
-  job.status = JobStatus.OPEN;
-  job.escrowDepositTx = depositTxSig;
-  job.escrowVerifiedAt = new Date();
-  // Reset expiry from activation time
-  job.expiresAt = new Date(Date.now() + JOB_EXPIRY_MS);
-  return job;
+  return rows[0] ? rowToJob(rows[0]) : null;
 }
 
-// Cancel job and mark for refund
-export function cancelJob(id: string, requesterWallet: string): Job | null {
-  const job = jobs.get(id);
-  if (!job) return null;
+export async function cancelJob(id: string, requesterWallet: string): Promise<Job | null> {
+  const rows = await query<any>(
+    `UPDATE jobs
+     SET status = $1
+     WHERE id = $2 AND requester_wallet = $3 AND status IN ($4, $5)
+     RETURNING *`,
+    [JobStatus.CANCELLED, id, requesterWallet, JobStatus.PENDING_DEPOSIT, JobStatus.OPEN]
+  );
 
-  // Only requester can cancel
-  if (job.requesterWallet !== requesterWallet) return null;
-
-  // Can only cancel if pending or open (not yet claimed)
-  if (job.status !== JobStatus.PENDING_DEPOSIT && job.status !== JobStatus.OPEN) {
-    return null;
-  }
-
-  job.status = JobStatus.CANCELLED;
-  return job;
+  return rows[0] ? rowToJob(rows[0]) : null;
 }
 
-// Expire job (for cleanup)
-export function expireJob(id: string): Job | null {
-  const job = jobs.get(id);
-  if (!job) return null;
+export async function expireJob(id: string): Promise<Job | null> {
+  const rows = await query<any>(
+    `UPDATE jobs
+     SET status = $1
+     WHERE id = $2 AND status = $3
+     RETURNING *`,
+    [JobStatus.EXPIRED, id, JobStatus.OPEN]
+  );
 
-  // Can only expire open jobs that haven't been claimed
-  if (job.status !== JobStatus.OPEN) return null;
-
-  job.status = JobStatus.EXPIRED;
-  return job;
+  return rows[0] ? rowToJob(rows[0]) : null;
 }
 
-// Mark escrow as released
-export function markEscrowReleased(id: string, releaseTxSig: string): Job | null {
-  const job = jobs.get(id);
-  if (!job) return null;
+export async function markEscrowReleased(id: string, releaseTxSig: string): Promise<Job | null> {
+  const rows = await query<any>(
+    `UPDATE jobs
+     SET status = $1, payment_tx_sig = $2, paid_at = NOW()
+     WHERE id = $3
+     RETURNING *`,
+    [JobStatus.PAID, releaseTxSig, id]
+  );
 
-  job.escrowReleaseTx = releaseTxSig;
-  job.paidAt = new Date();
-  job.status = JobStatus.PAID;
-  return job;
+  return rows[0] ? rowToJob(rows[0]) : null;
 }
 
-export function getJob(id: string): Job | null {
-  return jobs.get(id) || null;
+export async function getJob(id: string): Promise<Job | null> {
+  const row = await queryOne<any>(
+    `SELECT * FROM jobs WHERE id = $1`,
+    [id]
+  );
+
+  return row ? rowToJob(row) : null;
 }
 
-export function listJobs(status?: JobStatus): Job[] {
-  const all = Array.from(jobs.values());
+export async function listJobs(status?: JobStatus): Promise<Job[]> {
+  let rows: any[];
+
   if (status) {
-    return all.filter((j) => j.status === status);
+    rows = await query<any>(
+      `SELECT * FROM jobs WHERE status = $1 ORDER BY created_at DESC`,
+      [status]
+    );
+  } else {
+    rows = await query<any>(
+      `SELECT * FROM jobs ORDER BY created_at DESC`
+    );
   }
-  return all.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+
+  return rows.map(rowToJob);
 }
 
-export function claimJob(id: string, workerWallet: string): Job | null {
-  const job = jobs.get(id);
-  if (!job || job.status !== JobStatus.OPEN) {
-    return null;
-  }
+export async function claimJob(id: string, workerWallet: string): Promise<Job | null> {
+  const rows = await query<any>(
+    `UPDATE jobs
+     SET worker_wallet = $1, status = $2, claimed_at = NOW()
+     WHERE id = $3 AND status = $4
+     RETURNING *`,
+    [workerWallet, JobStatus.CLAIMED, id, JobStatus.OPEN]
+  );
 
-  job.workerWallet = workerWallet;
-  job.status = JobStatus.CLAIMED;
-  job.claimedAt = new Date();
-  return job;
+  return rows[0] ? rowToJob(rows[0]) : null;
 }
 
-export function completeJob(
-  id: string,
-  result: string,
-  workerWallet: string
-): Job | null {
-  const job = jobs.get(id);
-  if (!job || job.status !== JobStatus.CLAIMED) {
-    return null;
-  }
-  if (job.workerWallet !== workerWallet) {
-    return null;
-  }
+export async function completeJob(id: string, result: string, workerWallet: string): Promise<Job | null> {
+  const rows = await query<any>(
+    `UPDATE jobs
+     SET status = $1, result = $2, completed_at = NOW()
+     WHERE id = $3 AND status = $4 AND worker_wallet = $5
+     RETURNING *`,
+    [JobStatus.COMPLETED, result, id, JobStatus.CLAIMED, workerWallet]
+  );
 
-  // Store result
-  const jobResult: JobResult = {
-    jobId: id,
-    result,
-    workerWallet,
-    submittedAt: new Date(),
+  return rows[0] ? rowToJob(rows[0]) : null;
+}
+
+export async function getResult(jobId: string): Promise<JobResult | null> {
+  const row = await queryOne<any>(
+    `SELECT id, result, worker_wallet, completed_at FROM jobs WHERE id = $1 AND result IS NOT NULL`,
+    [jobId]
+  );
+
+  if (!row || !row.result) return null;
+
+  return {
+    jobId: row.id,
+    result: row.result,
+    workerWallet: row.worker_wallet,
+    submittedAt: new Date(row.completed_at),
   };
-  results.set(id, jobResult);
-
-  // Update job
-  job.status = JobStatus.COMPLETED;
-  job.completedAt = new Date();
-  return job;
 }
 
-export function getResult(jobId: string): JobResult | null {
-  return results.get(jobId) || null;
+export async function markJobPaid(id: string, txSig: string): Promise<Job | null> {
+  const rows = await query<any>(
+    `UPDATE jobs
+     SET status = $1, payment_tx_sig = $2, paid_at = NOW()
+     WHERE id = $3 AND status = $4
+     RETURNING *`,
+    [JobStatus.PAID, txSig, id, JobStatus.COMPLETED]
+  );
+
+  return rows[0] ? rowToJob(rows[0]) : null;
 }
 
-export function markJobPaid(id: string, txSig: string): Job | null {
-  const job = jobs.get(id);
-  if (!job || job.status !== JobStatus.COMPLETED) {
-    return null;
-  }
-
-  job.status = JobStatus.PAID;
-  job.paidAt = new Date();
-  job.paymentTxSig = txSig;
-  return job;
-}
-
-// Serialize job for API response (handle BigInt and dates)
+// Serialize job for API response
 export function serializeJob(job: Job): object {
   return {
     id: job.id,
@@ -233,11 +235,8 @@ export function serializeJob(job: Job): object {
     claimedAt: job.claimedAt,
     completedAt: job.completedAt,
     paidAt: job.paidAt,
+    depositTxSig: job.escrowDepositTx,
+    paymentTxSig: job.paymentTxSig,
     expiresAt: job.expiresAt,
-    // Only include escrow info if relevant
-    escrow: job.escrowDepositTx ? {
-      depositVerified: !!job.escrowVerifiedAt,
-      releaseTx: job.escrowReleaseTx,
-    } : undefined,
   };
 }

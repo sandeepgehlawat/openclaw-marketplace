@@ -8,23 +8,16 @@ const router = Router();
 
 /**
  * GET /api/v1/results/:jobId - Get job result (releases escrow to worker)
- *
- * ESCROW MODEL:
- * - Requester deposited escrow when creating job
- * - Worker completed the job
- * - When requester fetches result, escrow releases to worker
- * - No additional payment needed (already in escrow)
  */
 router.get("/:jobId", async (req: Request<{ jobId: string }>, res: Response) => {
   try {
     const jobId = req.params.jobId;
-    const job = jobService.get(jobId);
+    const job = await jobService.get(jobId);
 
     if (!job) {
       return res.status(404).json({ error: "Job not found" });
     }
 
-    // Check job status
     if (job.status === JobStatus.PENDING_DEPOSIT) {
       return res.status(400).json({ error: "Job pending escrow deposit" });
     }
@@ -41,8 +34,7 @@ router.get("/:jobId", async (req: Request<{ jobId: string }>, res: Response) => 
       return res.status(400).json({ error: "Job was cancelled or expired" });
     }
 
-    // Get the result
-    const result = jobService.getResult(jobId);
+    const result = await jobService.getResult(jobId);
     if (!result) {
       return res.status(404).json({ error: "Result not found" });
     }
@@ -65,12 +57,10 @@ router.get("/:jobId", async (req: Request<{ jobId: string }>, res: Response) => 
 
     // Job is completed - release escrow to worker
     if (job.status === JobStatus.COMPLETED) {
-      // Verify escrow exists
-      if (!escrowService.hasVerifiedEscrow(jobId)) {
+      if (!await escrowService.hasVerifiedEscrow(jobId)) {
         return res.status(500).json({ error: "Escrow record not found" });
       }
 
-      // Release escrow to worker
       const releaseResult = await escrowService.releaseToWorker(jobId, job.workerWallet!);
 
       if (!releaseResult.success) {
@@ -78,11 +68,9 @@ router.get("/:jobId", async (req: Request<{ jobId: string }>, res: Response) => 
         return res.status(500).json({ error: "Payment release failed" });
       }
 
-      // Update job status
-      jobService.markEscrowReleased(jobId, releaseResult.txSig!);
+      await jobService.markEscrowReleased(jobId, releaseResult.txSig!);
 
-      // Broadcast payment
-      const updatedJob = jobService.get(jobId);
+      const updatedJob = await jobService.get(jobId);
       if (updatedJob) {
         wsHub.broadcastJobPaid(updatedJob);
       }
@@ -101,7 +89,6 @@ router.get("/:jobId", async (req: Request<{ jobId: string }>, res: Response) => 
       });
     }
 
-    // Unknown status
     return res.status(400).json({ error: "Invalid job status" });
 
   } catch (error) {

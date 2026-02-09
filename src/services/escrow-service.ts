@@ -1,15 +1,13 @@
 import { PublicKey, Keypair, Transaction } from "@solana/web3.js";
 import { getConnection, loadWallet } from "../solana/client.js";
-import { verifyUsdcTransfer, buildUsdcTransferTx, getUsdcBalance } from "../solana/usdc.js";
+import { verifyUsdcTransfer } from "../solana/usdc.js";
 import { PLATFORM_WALLET, PLATFORM_FEE_PERCENT, calculateFees, USDC_MINT_DEVNET } from "../config/constants.js";
 import { createTransferInstruction, getAssociatedTokenAddress } from "@solana/spl-token";
+import { query, queryOne } from "../db/index.js";
 
-// Escrow configuration
 const ESCROW_WALLET = process.env.ESCROW_WALLET || PLATFORM_WALLET;
-const ESCROW_PRIVATE_KEY = process.env.ESCROW_PRIVATE_KEY; // Required for releases
-const JOB_EXPIRY_HOURS = 24; // Jobs expire if not claimed within 24 hours
+const ESCROW_PRIVATE_KEY = process.env.ESCROW_PRIVATE_KEY;
 
-// Escrow record for tracking deposits
 export interface EscrowRecord {
   jobId: string;
   requesterWallet: string;
@@ -22,9 +20,19 @@ export interface EscrowRecord {
   releasedAt: Date | null;
 }
 
-// In-memory escrow store (production: use database)
-const escrowRecords = new Map<string, EscrowRecord>();
-const usedDepositTxs = new Set<string>(); // Prevent deposit reuse
+function rowToEscrow(row: any): EscrowRecord {
+  return {
+    jobId: row.job_id,
+    requesterWallet: row.requester_wallet,
+    workerWallet: row.worker_wallet,
+    amountAtomic: BigInt(row.amount_atomic),
+    depositTxSig: row.deposit_tx_sig,
+    depositVerifiedAt: new Date(row.deposit_verified_at),
+    status: row.status,
+    releaseTxSig: row.release_tx_sig,
+    releasedAt: row.released_at ? new Date(row.released_at) : null,
+  };
+}
 
 export class EscrowService {
   private escrowKeypair: Keypair | null = null;
@@ -40,67 +48,62 @@ export class EscrowService {
     }
   }
 
-  // Get escrow wallet address
   getEscrowWallet(): string {
     return ESCROW_WALLET;
   }
 
-  // Check if escrow is operational (can release funds)
   isOperational(): boolean {
     return !!this.escrowKeypair;
   }
 
-  /**
-   * Verify a deposit transaction and create escrow record
-   * SECURITY: Verifies on-chain that funds actually arrived
-   */
   async verifyDeposit(
     jobId: string,
     requesterWallet: string,
     expectedAmountAtomic: bigint,
     depositTxSig: string
   ): Promise<{ success: boolean; error?: string }> {
-    // Check if this deposit tx was already used
-    if (usedDepositTxs.has(depositTxSig)) {
+    // Check if deposit tx already used
+    const usedTx = await queryOne(
+      `SELECT tx_sig FROM used_deposit_txs WHERE tx_sig = $1`,
+      [depositTxSig]
+    );
+    if (usedTx) {
       return { success: false, error: "Deposit transaction already used" };
     }
 
     // Check if job already has escrow
-    if (escrowRecords.has(jobId)) {
+    const existingEscrow = await queryOne(
+      `SELECT job_id FROM escrow_records WHERE job_id = $1`,
+      [jobId]
+    );
+    if (existingEscrow) {
       return { success: false, error: "Job already has escrow deposit" };
     }
 
     try {
-      // Verify the deposit on-chain
       const verified = await verifyUsdcTransfer(
         depositTxSig,
-        requesterWallet, // Must be FROM the requester
-        ESCROW_WALLET,   // Must be TO the escrow wallet
+        requesterWallet,
+        ESCROW_WALLET,
         expectedAmountAtomic
       );
 
       if (!verified) {
-        return {
-          success: false,
-          error: "Deposit not verified - check amount and recipient"
-        };
+        return { success: false, error: "Deposit not verified - check amount and recipient" };
       }
 
       // Create escrow record
-      const record: EscrowRecord = {
-        jobId,
-        requesterWallet,
-        workerWallet: null,
-        amountAtomic: expectedAmountAtomic,
-        depositTxSig,
-        depositVerifiedAt: new Date(),
-        status: "held",
-        releaseTxSig: null,
-        releasedAt: null,
-      };
+      await query(
+        `INSERT INTO escrow_records (job_id, requester_wallet, amount_atomic, deposit_tx_sig, status)
+         VALUES ($1, $2, $3, $4, 'held')`,
+        [jobId, requesterWallet, expectedAmountAtomic.toString(), depositTxSig]
+      );
 
-      escrowRecords.set(jobId, record);
-      usedDepositTxs.add(depositTxSig);
+      // Mark tx as used
+      await query(
+        `INSERT INTO used_deposit_txs (tx_sig) VALUES ($1)`,
+        [depositTxSig]
+      );
 
       console.log(`Escrow verified for job ${jobId}: ${expectedAmountAtomic} atomic units`);
       return { success: true };
@@ -111,15 +114,11 @@ export class EscrowService {
     }
   }
 
-  /**
-   * Release escrow to worker after job completion
-   * SECURITY: Only releases to verified worker, includes platform fee
-   */
   async releaseToWorker(
     jobId: string,
     workerWallet: string
   ): Promise<{ success: boolean; txSig?: string; error?: string }> {
-    const record = escrowRecords.get(jobId);
+    const record = await this.getEscrow(jobId);
 
     if (!record) {
       return { success: false, error: "No escrow record found" };
@@ -137,20 +136,16 @@ export class EscrowService {
       const conn = getConnection();
       const { workerAmount, platformFee } = calculateFees(record.amountAtomic);
 
-      // Build transaction with both transfers (worker + platform fee)
       const tx = new Transaction();
 
-      // Get escrow's ATA
       const escrowAta = await getAssociatedTokenAddress(
         USDC_MINT_DEVNET,
         this.escrowKeypair.publicKey
       );
 
-      // Worker's ATA
       const workerPubkey = new PublicKey(workerWallet);
       const workerAta = await getAssociatedTokenAddress(USDC_MINT_DEVNET, workerPubkey);
 
-      // Add worker transfer
       tx.add(
         createTransferInstruction(
           escrowAta,
@@ -160,7 +155,6 @@ export class EscrowService {
         )
       );
 
-      // Add platform fee transfer if configured
       if (PLATFORM_WALLET && platformFee > 0n) {
         const platformPubkey = new PublicKey(PLATFORM_WALLET);
         const platformAta = await getAssociatedTokenAddress(USDC_MINT_DEVNET, platformPubkey);
@@ -175,7 +169,6 @@ export class EscrowService {
         );
       }
 
-      // Sign and send
       const { blockhash } = await conn.getLatestBlockhash();
       tx.recentBlockhash = blockhash;
       tx.feePayer = this.escrowKeypair.publicKey;
@@ -184,11 +177,13 @@ export class EscrowService {
       const txSig = await conn.sendRawTransaction(tx.serialize());
       await conn.confirmTransaction(txSig, "confirmed");
 
-      // Update record
-      record.status = "released";
-      record.workerWallet = workerWallet;
-      record.releaseTxSig = txSig;
-      record.releasedAt = new Date();
+      // Update record in DB
+      await query(
+        `UPDATE escrow_records
+         SET status = 'released', worker_wallet = $1, release_tx_sig = $2, released_at = NOW()
+         WHERE job_id = $3`,
+        [workerWallet, txSig, jobId]
+      );
 
       console.log(`Escrow released for job ${jobId}: ${workerAmount} to worker, ${platformFee} to platform`);
       return { success: true, txSig };
@@ -199,14 +194,8 @@ export class EscrowService {
     }
   }
 
-  /**
-   * Refund escrow to requester (for cancelled/expired jobs)
-   * SECURITY: Only refunds to original requester wallet
-   */
-  async refundToRequester(
-    jobId: string
-  ): Promise<{ success: boolean; txSig?: string; error?: string }> {
-    const record = escrowRecords.get(jobId);
+  async refundToRequester(jobId: string): Promise<{ success: boolean; txSig?: string; error?: string }> {
+    const record = await this.getEscrow(jobId);
 
     if (!record) {
       return { success: false, error: "No escrow record found" };
@@ -223,17 +212,14 @@ export class EscrowService {
     try {
       const conn = getConnection();
 
-      // Get escrow's ATA
       const escrowAta = await getAssociatedTokenAddress(
         USDC_MINT_DEVNET,
         this.escrowKeypair.publicKey
       );
 
-      // Requester's ATA - MUST be original requester
       const requesterPubkey = new PublicKey(record.requesterWallet);
       const requesterAta = await getAssociatedTokenAddress(USDC_MINT_DEVNET, requesterPubkey);
 
-      // Build refund transaction (full amount, no fee on refund)
       const tx = new Transaction().add(
         createTransferInstruction(
           escrowAta,
@@ -252,9 +238,12 @@ export class EscrowService {
       await conn.confirmTransaction(txSig, "confirmed");
 
       // Update record
-      record.status = "refunded";
-      record.releaseTxSig = txSig;
-      record.releasedAt = new Date();
+      await query(
+        `UPDATE escrow_records
+         SET status = 'refunded', release_tx_sig = $1, released_at = NOW()
+         WHERE job_id = $2`,
+        [txSig, jobId]
+      );
 
       console.log(`Escrow refunded for job ${jobId}: ${record.amountAtomic} to requester`);
       return { success: true, txSig };
@@ -265,38 +254,30 @@ export class EscrowService {
     }
   }
 
-  // Get escrow record for a job
-  getEscrow(jobId: string): EscrowRecord | null {
-    return escrowRecords.get(jobId) || null;
+  async getEscrow(jobId: string): Promise<EscrowRecord | null> {
+    const row = await queryOne(
+      `SELECT * FROM escrow_records WHERE job_id = $1`,
+      [jobId]
+    );
+    return row ? rowToEscrow(row) : null;
   }
 
-  // Check if job has verified escrow
-  hasVerifiedEscrow(jobId: string): boolean {
-    const record = escrowRecords.get(jobId);
+  async hasVerifiedEscrow(jobId: string): Promise<boolean> {
+    const record = await this.getEscrow(jobId);
     return !!record && record.status === "held";
   }
 
-  // Get escrow wallet balance
-  async getEscrowBalance(): Promise<number> {
-    return getUsdcBalance(ESCROW_WALLET);
+  async getAllRecords(): Promise<EscrowRecord[]> {
+    const rows = await query(`SELECT * FROM escrow_records ORDER BY deposit_verified_at DESC`);
+    return rows.map(rowToEscrow);
   }
 
-  // Get all escrow records (for admin)
-  getAllRecords(): EscrowRecord[] {
-    return Array.from(escrowRecords.values());
-  }
-
-  // Get total held in escrow
-  getTotalHeld(): bigint {
-    let total = 0n;
-    for (const record of escrowRecords.values()) {
-      if (record.status === "held") {
-        total += record.amountAtomic;
-      }
-    }
-    return total;
+  async getTotalHeld(): Promise<bigint> {
+    const row = await queryOne<{ total: string }>(
+      `SELECT COALESCE(SUM(amount_atomic), 0) as total FROM escrow_records WHERE status = 'held'`
+    );
+    return BigInt(row?.total || "0");
   }
 }
 
-// Singleton instance
 export const escrowService = new EscrowService();

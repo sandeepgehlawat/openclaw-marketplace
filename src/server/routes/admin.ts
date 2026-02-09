@@ -2,72 +2,52 @@ import { Router, Request, Response, NextFunction } from "express";
 import { paymentService } from "../../services/payment-service.js";
 import { jobService } from "../../services/job-service.js";
 import { escrowService } from "../../services/escrow-service.js";
-import { atomicToUsdc, PLATFORM_FEE_PERCENT, PLATFORM_WALLET, JobStatus } from "../../config/constants.js";
+import { atomicToUsdc, JobStatus } from "../../config/constants.js";
 
 const router = Router();
 
-// Admin configuration from environment
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY;
 const ADMIN_ALLOWED_IPS = process.env.ADMIN_ALLOWED_IPS?.split(",").map(ip => ip.trim()).filter(Boolean) || [];
 
-// Check if IP is allowed (localhost or explicitly whitelisted)
 function isAllowedIP(ip: string | undefined): boolean {
   if (!ip) return false;
-
-  // Always allow localhost
   const localhostIPs = ["127.0.0.1", "::1", "::ffff:127.0.0.1", "localhost"];
   if (localhostIPs.includes(ip)) return true;
-
-  // Check whitelist
   if (ADMIN_ALLOWED_IPS.includes(ip)) return true;
-
   return false;
 }
 
-// Authentication middleware for admin routes
-// SECURITY: Requires BOTH IP whitelist AND API key - no exceptions
 function requireAdminAuth(req: Request, res: Response, next: NextFunction) {
   const clientIP = req.ip || req.socket.remoteAddress;
 
-  // CRITICAL: API key is ALWAYS required - no bypass
   if (!ADMIN_API_KEY) {
-    return res.status(503).json({
-      error: "Admin disabled"
-    });
+    return res.status(503).json({ error: "Admin disabled" });
   }
 
-  // Check IP whitelist - localhost always allowed, others need whitelist
   if (!isAllowedIP(clientIP)) {
     console.warn(`Admin blocked: unauthorized IP ${clientIP}`);
-    return res.status(403).json({
-      error: "Access denied"
-    });
+    return res.status(403).json({ error: "Access denied" });
   }
 
-  // Validate API key
   const apiKey = req.headers["x-admin-key"] || req.headers["authorization"]?.replace("Bearer ", "");
 
   if (!apiKey || apiKey !== ADMIN_API_KEY) {
     console.warn(`Admin blocked: invalid key from ${clientIP}`);
-    return res.status(403).json({
-      error: "Access denied"
-    });
+    return res.status(403).json({ error: "Access denied" });
   }
 
   next();
 }
 
-// Apply auth to all admin routes
 router.use(requireAdminAuth);
 
-// GET /api/v1/admin/stats - Platform statistics
+// GET /api/v1/admin/stats
 router.get("/stats", async (req: Request, res: Response) => {
   try {
-    const jobs = jobService.list();
+    const jobs = await jobService.list();
     const earnings = paymentService.getPlatformEarnings();
     const feeInfo = paymentService.getFeeInfo();
 
-    // Calculate stats
     const totalJobs = jobs.length;
     const paidJobs = jobs.filter((j) => j.status === "paid").length;
     const totalVolume = jobs
@@ -103,7 +83,7 @@ router.get("/stats", async (req: Request, res: Response) => {
   }
 });
 
-// GET /api/v1/admin/earnings - Detailed earnings
+// GET /api/v1/admin/earnings
 router.get("/earnings", async (req: Request, res: Response) => {
   try {
     const earnings = paymentService.getPlatformEarnings();
@@ -130,7 +110,7 @@ router.get("/earnings", async (req: Request, res: Response) => {
   }
 });
 
-// GET /api/v1/admin/fee-info - Current fee configuration
+// GET /api/v1/admin/fee-info
 router.get("/fee-info", async (req: Request, res: Response) => {
   const feeInfo = paymentService.getFeeInfo();
 
@@ -146,16 +126,16 @@ router.get("/fee-info", async (req: Request, res: Response) => {
   });
 });
 
-// GET /api/v1/admin/results - View all completed job results (admin only)
+// GET /api/v1/admin/results
 router.get("/results", async (req: Request, res: Response) => {
   try {
-    const jobs = jobService.list();
+    const jobs = await jobService.list();
     const completedJobs = jobs.filter(
       (j) => j.status === JobStatus.COMPLETED || j.status === JobStatus.PAID
     );
 
-    const results = completedJobs.map((job) => {
-      const result = jobService.getResult(job.id);
+    const results = await Promise.all(completedJobs.map(async (job) => {
+      const result = await jobService.getResult(job.id);
       return {
         jobId: job.id,
         title: job.title,
@@ -166,7 +146,7 @@ router.get("/results", async (req: Request, res: Response) => {
         paidAt: job.paidAt,
         result: result?.result || null,
       };
-    });
+    }));
 
     res.json({
       success: true,
@@ -179,17 +159,17 @@ router.get("/results", async (req: Request, res: Response) => {
   }
 });
 
-// GET /api/v1/admin/results/:jobId - View specific job result (admin only)
+// GET /api/v1/admin/results/:jobId
 router.get("/results/:jobId", async (req: Request<{ jobId: string }>, res: Response) => {
   try {
     const jobId = req.params.jobId;
-    const job = jobService.get(jobId);
+    const job = await jobService.get(jobId);
 
     if (!job) {
       return res.status(404).json({ error: "Job not found" });
     }
 
-    const result = jobService.getResult(jobId);
+    const result = await jobService.getResult(jobId);
 
     res.json({
       success: true,
@@ -215,10 +195,10 @@ router.get("/results/:jobId", async (req: Request<{ jobId: string }>, res: Respo
   }
 });
 
-// GET /api/v1/admin/jobs - List all jobs with full details
+// GET /api/v1/admin/jobs
 router.get("/jobs", async (req: Request, res: Response) => {
   try {
-    const jobs = jobService.list();
+    const jobs = await jobService.list();
 
     res.json({
       success: true,
@@ -244,19 +224,17 @@ router.get("/jobs", async (req: Request, res: Response) => {
   }
 });
 
-// GET /api/v1/admin/escrow - Escrow status and records
+// GET /api/v1/admin/escrow
 router.get("/escrow", async (req: Request, res: Response) => {
   try {
-    const records = escrowService.getAllRecords();
-    const balance = await escrowService.getEscrowBalance();
-    const totalHeld = escrowService.getTotalHeld();
+    const records = await escrowService.getAllRecords();
+    const totalHeld = await escrowService.getTotalHeld();
 
     res.json({
       success: true,
       escrow: {
         walletConfigured: !!escrowService.getEscrowWallet(),
         operational: escrowService.isOperational(),
-        balance: balance,
         totalHeld: atomicToUsdc(totalHeld),
         totalHeldAtomic: totalHeld.toString(),
       },

@@ -19,32 +19,31 @@ import { JobStatus } from "../config/constants.js";
 import { isValidPublicKey } from "../solana/client.js";
 
 export class JobService {
-  create(input: CreateJobInput): Job {
-    // Validate wallet address
+  async create(input: CreateJobInput): Promise<Job> {
     if (!isValidPublicKey(input.requesterWallet)) {
       throw new Error("Invalid requester wallet address");
     }
     return createJob(input);
   }
 
-  get(id: string): Job | null {
+  async get(id: string): Promise<Job | null> {
     return getJob(id);
   }
 
-  list(status?: JobStatus): Job[] {
+  async list(status?: JobStatus): Promise<Job[]> {
     return listJobs(status);
   }
 
-  listOpen(): Job[] {
+  async listOpen(): Promise<Job[]> {
     return listJobs(JobStatus.OPEN);
   }
 
-  claim(id: string, workerWallet: string): Job | null {
+  async claim(id: string, workerWallet: string): Promise<Job | null> {
     if (!isValidPublicKey(workerWallet)) {
       throw new Error("Invalid worker wallet address");
     }
 
-    const job = getJob(id);
+    const job = await getJob(id);
     if (!job) {
       throw new Error("Job not found");
     }
@@ -58,12 +57,12 @@ export class JobService {
     return claimJob(id, workerWallet);
   }
 
-  complete(id: string, result: string, workerWallet: string): Job | null {
+  async complete(id: string, result: string, workerWallet: string): Promise<Job | null> {
     if (!isValidPublicKey(workerWallet)) {
       throw new Error("Invalid worker wallet address");
     }
 
-    const job = getJob(id);
+    const job = await getJob(id);
     if (!job) {
       throw new Error("Job not found");
     }
@@ -77,17 +76,16 @@ export class JobService {
     return completeJob(id, result, workerWallet);
   }
 
-  getResult(jobId: string): JobResult | null {
+  async getResult(jobId: string): Promise<JobResult | null> {
     return getResult(jobId);
   }
 
-  markPaid(id: string, txSig: string): Job | null {
+  async markPaid(id: string, txSig: string): Promise<Job | null> {
     return markJobPaid(id, txSig);
   }
 
-  // Escrow-related methods
-  activate(id: string, depositTxSig: string): Job | null {
-    const job = getJob(id);
+  async activate(id: string, depositTxSig: string): Promise<Job | null> {
+    const job = await getJob(id);
     if (!job) {
       throw new Error("Job not found");
     }
@@ -97,11 +95,11 @@ export class JobService {
     return activateJob(id, depositTxSig);
   }
 
-  cancel(id: string, requesterWallet: string): Job | null {
+  async cancel(id: string, requesterWallet: string): Promise<Job | null> {
     if (!isValidPublicKey(requesterWallet)) {
       throw new Error("Invalid wallet address");
     }
-    const job = getJob(id);
+    const job = await getJob(id);
     if (!job) {
       throw new Error("Job not found");
     }
@@ -114,22 +112,19 @@ export class JobService {
     return cancelJob(id, requesterWallet);
   }
 
-  expire(id: string): Job | null {
+  async expire(id: string): Promise<Job | null> {
     return expireJob(id);
   }
 
-  markEscrowReleased(id: string, releaseTxSig: string): Job | null {
+  async markEscrowReleased(id: string, releaseTxSig: string): Promise<Job | null> {
     return markEscrowReleased(id, releaseTxSig);
   }
 
-  // List jobs pending deposit (for requester to see their pending jobs)
-  listPendingDeposit(requesterWallet: string): Job[] {
-    return listJobs(JobStatus.PENDING_DEPOSIT).filter(
-      j => j.requesterWallet === requesterWallet
-    );
+  async listPendingDeposit(requesterWallet: string): Promise<Job[]> {
+    const jobs = await listJobs(JobStatus.PENDING_DEPOSIT);
+    return jobs.filter(j => j.requesterWallet === requesterWallet);
   }
 
-  // Check if job is expired
   isExpired(job: Job): boolean {
     if (!job.expiresAt) return false;
     return new Date() > job.expiresAt;
@@ -144,5 +139,4 @@ export class JobService {
   }
 }
 
-// Singleton instance
 export const jobService = new JobService();

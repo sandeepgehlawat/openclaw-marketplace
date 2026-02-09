@@ -4,35 +4,30 @@ import { z, ZodError } from "zod";
 import { jobService } from "../../services/job-service.js";
 import { escrowService } from "../../services/escrow-service.js";
 import { CreateJobSchema, ClaimJobSchema, CompleteJobSchema } from "../../models/job.js";
-import { JobStatus, ESCROW_WALLET } from "../../config/constants.js";
+import { JobStatus } from "../../config/constants.js";
 import { wsHub } from "../websocket/hub.js";
 
-// Helper to create result hash for verification
 function hashResult(result: string): string {
   return createHash("sha256").update(result).digest("hex");
 }
 
 const router = Router();
 
-// Valid job statuses for filtering
 const VALID_STATUSES = ["pending_deposit", "open", "claimed", "completed", "paid", "cancelled", "expired"];
 
-// Validation schemas for escrow endpoints
 const VerifyDepositSchema = z.object({
-  depositTxSig: z.string().min(80).max(100), // Solana tx signature
+  depositTxSig: z.string().min(80).max(100),
 });
 
 const CancelJobSchema = z.object({
   requesterWallet: z.string().min(32).max(44),
 });
 
-// Sanitize error messages - never expose internal details
 function sanitizeError(error: unknown): string {
   if (error instanceof ZodError) {
     return "Invalid request data";
   }
   if (error instanceof Error) {
-    // Only return safe, predefined messages
     const safeMessages = [
       "Job not found",
       "Job cannot be claimed",
@@ -51,13 +46,12 @@ function sanitizeError(error: unknown): string {
   return "Request failed";
 }
 
-// POST /api/v1/jobs - Create a new job (returns escrow deposit instructions)
+// POST /api/v1/jobs - Create a new job
 router.post("/", async (req: Request, res: Response) => {
   try {
     const input = CreateJobSchema.parse(req.body);
-    const job = jobService.create(input);
+    const job = await jobService.create(input);
 
-    // Don't broadcast yet - job is pending deposit
     res.status(201).json({
       success: true,
       job: jobService.serialize(job),
@@ -80,7 +74,6 @@ router.post("/", async (req: Request, res: Response) => {
   }
 });
 
-// Demo mode for testing without real deposits
 const DEMO_MODE = process.env.DEMO_MODE === "true";
 
 // POST /api/v1/jobs/:id/activate - Demo mode: activate job without deposit
@@ -89,7 +82,7 @@ router.post("/:id/activate", async (req: Request<{ id: string }>, res: Response)
     return res.status(403).json({ error: "Demo mode not enabled" });
   }
 
-  const job = jobService.get(req.params.id);
+  const job = await jobService.get(req.params.id);
   if (!job) {
     return res.status(404).json({ error: "Job not found" });
   }
@@ -98,7 +91,7 @@ router.post("/:id/activate", async (req: Request<{ id: string }>, res: Response)
     return res.status(400).json({ error: "Job not pending deposit" });
   }
 
-  const activatedJob = jobService.activate(job.id, "demo_tx_" + Date.now());
+  const activatedJob = await jobService.activate(job.id, "demo_tx_" + Date.now());
   if (!activatedJob) {
     return res.status(500).json({ error: "Failed to activate job" });
   }
@@ -116,7 +109,7 @@ router.post("/:id/activate", async (req: Request<{ id: string }>, res: Response)
 router.post("/:id/deposit", async (req: Request<{ id: string }>, res: Response) => {
   try {
     const { depositTxSig } = VerifyDepositSchema.parse(req.body);
-    const job = jobService.get(req.params.id);
+    const job = await jobService.get(req.params.id);
 
     if (!job) {
       return res.status(404).json({ error: "Job not found" });
@@ -126,7 +119,6 @@ router.post("/:id/deposit", async (req: Request<{ id: string }>, res: Response) 
       return res.status(400).json({ error: "Job not pending deposit" });
     }
 
-    // Verify the deposit on-chain
     const result = await escrowService.verifyDeposit(
       job.id,
       job.requesterWallet,
@@ -138,13 +130,11 @@ router.post("/:id/deposit", async (req: Request<{ id: string }>, res: Response) 
       return res.status(400).json({ error: result.error || "Deposit verification failed" });
     }
 
-    // Activate the job
-    const activatedJob = jobService.activate(job.id, depositTxSig);
+    const activatedJob = await jobService.activate(job.id, depositTxSig);
     if (!activatedJob) {
       return res.status(500).json({ error: "Failed to activate job" });
     }
 
-    // Now broadcast to workers
     wsHub.broadcastJobNew(activatedJob);
 
     res.json({
@@ -164,32 +154,28 @@ router.post("/:id/deposit", async (req: Request<{ id: string }>, res: Response) 
 router.post("/:id/cancel", async (req: Request<{ id: string }>, res: Response) => {
   try {
     const { requesterWallet } = CancelJobSchema.parse(req.body);
-    const job = jobService.get(req.params.id);
+    const job = await jobService.get(req.params.id);
 
     if (!job) {
       return res.status(404).json({ error: "Job not found" });
     }
 
-    // Only requester can cancel
     if (job.requesterWallet !== requesterWallet) {
       return res.status(403).json({ error: "Only requester can cancel" });
     }
 
-    // Can only cancel pending or open jobs
     if (job.status !== JobStatus.PENDING_DEPOSIT && job.status !== JobStatus.OPEN) {
       return res.status(400).json({ error: "Job cannot be cancelled - already in progress" });
     }
 
-    // If escrow was deposited, refund it
-    if (job.status === JobStatus.OPEN && escrowService.hasVerifiedEscrow(job.id)) {
+    if (job.status === JobStatus.OPEN && await escrowService.hasVerifiedEscrow(job.id)) {
       const refundResult = await escrowService.refundToRequester(job.id);
       if (!refundResult.success) {
         return res.status(500).json({ error: "Refund failed - contact support" });
       }
     }
 
-    // Cancel the job
-    const cancelledJob = jobService.cancel(job.id, requesterWallet);
+    const cancelledJob = await jobService.cancel(job.id, requesterWallet);
 
     res.json({
       success: true,
@@ -201,7 +187,7 @@ router.post("/:id/cancel", async (req: Request<{ id: string }>, res: Response) =
   }
 });
 
-// GET /api/v1/jobs/config - Get marketplace config (escrow wallet, etc.)
+// GET /api/v1/jobs/config - Get marketplace config
 router.get("/config", async (req: Request, res: Response) => {
   res.json({
     success: true,
@@ -216,7 +202,6 @@ router.get("/", async (req: Request, res: Response) => {
   try {
     const statusParam = req.query.status as string | undefined;
 
-    // Validate status parameter
     let status: JobStatus | undefined;
     if (statusParam) {
       if (!VALID_STATUSES.includes(statusParam)) {
@@ -225,7 +210,7 @@ router.get("/", async (req: Request, res: Response) => {
       status = statusParam as JobStatus;
     }
 
-    const jobs = status ? jobService.list(status) : jobService.list();
+    const jobs = await jobService.list(status);
 
     res.json({
       success: true,
@@ -237,10 +222,10 @@ router.get("/", async (req: Request, res: Response) => {
   }
 });
 
-// GET /api/v1/jobs/open - List open jobs (convenience endpoint)
+// GET /api/v1/jobs/open - List open jobs
 router.get("/open", async (req: Request, res: Response) => {
   try {
-    const jobs = jobService.listOpen();
+    const jobs = await jobService.listOpen();
 
     res.json({
       success: true,
@@ -255,7 +240,7 @@ router.get("/open", async (req: Request, res: Response) => {
 // GET /api/v1/jobs/:id - Get job details
 router.get("/:id", async (req: Request<{ id: string }>, res: Response) => {
   try {
-    const job = jobService.get(req.params.id);
+    const job = await jobService.get(req.params.id);
     if (!job) {
       return res.status(404).json({ error: "Job not found" });
     }
@@ -273,13 +258,12 @@ router.get("/:id", async (req: Request<{ id: string }>, res: Response) => {
 router.post("/:id/claim", async (req: Request<{ id: string }>, res: Response) => {
   try {
     const input = ClaimJobSchema.parse(req.body);
-    const job = jobService.claim(req.params.id, input.workerWallet);
+    const job = await jobService.claim(req.params.id, input.workerWallet);
 
     if (!job) {
       return res.status(400).json({ error: "Failed to claim job" });
     }
 
-    // Broadcast to connected clients
     wsHub.broadcastJobClaimed(job);
 
     res.json({
@@ -302,7 +286,7 @@ router.post("/:id/claim", async (req: Request<{ id: string }>, res: Response) =>
 router.post("/:id/complete", async (req: Request<{ id: string }>, res: Response) => {
   try {
     const input = CompleteJobSchema.parse(req.body);
-    const job = jobService.complete(
+    const job = await jobService.complete(
       req.params.id,
       input.result,
       input.workerWallet
@@ -312,7 +296,6 @@ router.post("/:id/complete", async (req: Request<{ id: string }>, res: Response)
       return res.status(400).json({ error: "Failed to complete job" });
     }
 
-    // Broadcast to connected clients
     wsHub.broadcastJobCompleted(job);
 
     res.json({
@@ -331,16 +314,14 @@ router.post("/:id/complete", async (req: Request<{ id: string }>, res: Response)
   }
 });
 
-// GET /api/v1/jobs/:id/verify - Verify completed job (for job poster)
-// Allows requester to see proof of completion before paying
+// GET /api/v1/jobs/:id/verify - Verify completed job
 router.get("/:id/verify", async (req: Request<{ id: string }>, res: Response) => {
   try {
-    const job = jobService.get(req.params.id);
+    const job = await jobService.get(req.params.id);
     if (!job) {
       return res.status(404).json({ error: "Job not found" });
     }
 
-    // Check if job is completed or paid
     if (job.status !== JobStatus.COMPLETED && job.status !== JobStatus.PAID) {
       return res.status(400).json({
         error: "Job not completed",
@@ -349,13 +330,11 @@ router.get("/:id/verify", async (req: Request<{ id: string }>, res: Response) =>
       });
     }
 
-    // Get the result
-    const resultData = jobService.getResult(job.id);
+    const resultData = await jobService.getResult(job.id);
     if (!resultData) {
       return res.status(404).json({ error: "Result not found" });
     }
 
-    // Create verification proof
     const resultHash = hashResult(resultData.result);
     const preview = resultData.result.substring(0, 100) + (resultData.result.length > 100 ? "..." : "");
 
@@ -381,7 +360,7 @@ router.get("/:id/verify", async (req: Request<{ id: string }>, res: Response) =>
         }
       },
       message: job.status === JobStatus.COMPLETED
-        ? "Job completed. Pay via x402 to get full result. Hash can be used to verify result integrity after payment."
+        ? "Job completed. Pay via x402 to get full result."
         : "Job paid. Full result available at payment endpoint."
     });
   } catch (error) {
@@ -398,12 +377,12 @@ router.post("/:id/verify-hash", async (req: Request<{ id: string }>, res: Respon
       return res.status(400).json({ error: "expectedHash required in body" });
     }
 
-    const job = jobService.get(req.params.id);
+    const job = await jobService.get(req.params.id);
     if (!job) {
       return res.status(404).json({ error: "Job not found" });
     }
 
-    const resultData = jobService.getResult(job.id);
+    const resultData = await jobService.getResult(job.id);
     if (!resultData) {
       return res.status(404).json({ error: "Result not found" });
     }

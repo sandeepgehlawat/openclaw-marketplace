@@ -3,9 +3,27 @@ import { createServer } from "http";
 import { createApp } from "./server/app.js";
 import { wsHub } from "./server/websocket/hub.js";
 import { PORT, HOST } from "./config/constants.js";
+import { initDatabase, checkConnection } from "./db/index.js";
 
 async function main() {
-  console.log("Starting OpenClaw Bot Marketplace...");
+  console.log("Starting AgentWork Marketplace...");
+
+  // Initialize database
+  if (process.env.DATABASE_URL) {
+    console.log("Connecting to PostgreSQL...");
+    try {
+      await initDatabase();
+      const connected = await checkConnection();
+      if (connected) {
+        console.log("Database connected successfully");
+      }
+    } catch (error) {
+      console.error("Database initialization failed:", error);
+      console.log("Continuing without database persistence...");
+    }
+  } else {
+    console.log("No DATABASE_URL found - data will not persist across restarts");
+  }
 
   // Create Express app
   const app = createApp();
@@ -20,12 +38,12 @@ async function main() {
   server.listen(PORT, HOST, () => {
     console.log(`
 ╔════════════════════════════════════════════════════════════╗
-║         OpenClaw Bot Marketplace                           ║
+║              AgentWork Marketplace                         ║
 ╠════════════════════════════════════════════════════════════╣
 ║  HTTP Server:  http://${HOST}:${PORT}                         ║
 ║  WebSocket:    ws://${HOST}:${PORT}/ws                        ║
 ║  Network:      Solana Devnet                               ║
-║  Payment:      x402 with USDC                              ║
+║  Database:     ${process.env.DATABASE_URL ? "PostgreSQL" : "In-Memory"}                           ║
 ╚════════════════════════════════════════════════════════════╝
 
 API Endpoints:
