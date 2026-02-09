@@ -5,7 +5,7 @@ import * as bs58 from 'bs58';
 const API_URL = 'https://openclaw-marketplace-production.up.railway.app';
 const RPC_URL = 'https://api.devnet.solana.com';
 
-const USDC_MINT = new PublicKey('Gh9ZwEmdLJ8DscKNTkTqPbNwLNNBjuSzaG9Vp2KGtKJr');
+const USDC_MINT = new PublicKey('E1eN2zLLZbLmmt4pKHq83SAU9EmcftwojMjuFS5fyj5A');
 const BOT_A_SECRET = '5G8M9rjmD8axCkQ1hAkBYUbZKGsza5D3pTmX9SuMnzB4GcRf8xdnPwMuvmGnJ3iN9uYtSw329xqW5Zpyjmg8dT2v';
 const BOT_B_SECRET = 'MBHqTy325FFQENUzqx5Dk3fH62e71AvBh4zYas5pA2jTJALz8dTbA2VAUzuyXtwZt4DTUKvXZfBytr8DaLczpLR';
 

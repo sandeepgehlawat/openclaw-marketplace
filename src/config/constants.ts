@@ -4,9 +4,9 @@ import { PublicKey } from "@solana/web3.js";
 export const SOLANA_DEVNET_RPC = process.env.SOLANA_RPC_URL || "https://api.devnet.solana.com";
 export const SOLANA_NETWORK = process.env.SOLANA_NETWORK || "devnet";
 
-// USDC on Devnet (Circle's test token)
+// USDC on Devnet (test token)
 export const USDC_MINT_DEVNET = new PublicKey(
-  process.env.USDC_MINT || "Gh9ZwEmdLJ8DscKNTkTqPbNwLNNBjuSzaG9Vp2KGtKJr"
+  process.env.USDC_MINT || "E1eN2zLLZbLmmt4pKHq83SAU9EmcftwojMjuFS5fyj5A"
 );
 
 // USDC has 6 decimals
