@@ -4,7 +4,7 @@ import { z, ZodError } from "zod";
 import { jobService } from "../../services/job-service.js";
 import { escrowService } from "../../services/escrow-service.js";
 import { CreateJobSchema, ClaimJobSchema, CompleteJobSchema } from "../../models/job.js";
-import { JobStatus } from "../../config/constants.js";
+import { JobStatus, USDC_MINT_DEVNET } from "../../config/constants.js";
 import { wsHub } from "../websocket/hub.js";
 
 function hashResult(result: string): string {
@@ -193,7 +193,7 @@ router.get("/config", async (req: Request, res: Response) => {
     success: true,
     escrowWallet: escrowService.getEscrowWallet(),
     network: "solana-devnet",
-    usdcMint: "Gh9ZwEmdLJ8DscKNTkTqPbNwLNNBjuSzaG9Vp2KGtKJr",
+    usdcMint: USDC_MINT_DEVNET.toBase58(),
   });
 });
 
