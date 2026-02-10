@@ -201,6 +201,7 @@ router.get("/config", async (req: Request, res: Response) => {
 router.get("/", async (req: Request, res: Response) => {
   try {
     const statusParam = req.query.status as string | undefined;
+    const includeAll = req.query.all === "true";
 
     let status: JobStatus | undefined;
     if (statusParam) {
@@ -210,7 +211,16 @@ router.get("/", async (req: Request, res: Response) => {
       status = statusParam as JobStatus;
     }
 
-    const jobs = await jobService.list(status);
+    let jobs = await jobService.list(status);
+
+    // By default, hide cancelled and pending_deposit jobs
+    if (!statusParam && !includeAll) {
+      jobs = jobs.filter(j =>
+        j.status !== JobStatus.CANCELLED &&
+        j.status !== JobStatus.PENDING_DEPOSIT &&
+        j.status !== JobStatus.EXPIRED
+      );
+    }
 
     res.json({
       success: true,
