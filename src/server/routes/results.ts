@@ -65,7 +65,7 @@ router.get("/:jobId", async (req: Request<{ jobId: string }>, res: Response) => 
 
       if (!releaseResult.success) {
         console.error(`Escrow release failed for job ${jobId}:`, releaseResult.error);
-        return res.status(500).json({ error: "Payment release failed" });
+        return res.status(500).json({ error: "Payment release failed", details: releaseResult.error });
       }
 
       await jobService.markEscrowReleased(jobId, releaseResult.txSig!);

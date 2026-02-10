@@ -40,11 +40,15 @@ export class EscrowService {
   constructor() {
     if (ESCROW_PRIVATE_KEY) {
       try {
-        this.escrowKeypair = loadWallet(ESCROW_PRIVATE_KEY);
+        const cleanKey = ESCROW_PRIVATE_KEY.trim();
+        this.escrowKeypair = loadWallet(cleanKey);
         console.log("Escrow wallet loaded:", this.escrowKeypair.publicKey.toBase58());
       } catch (e) {
-        console.error("Failed to load escrow wallet - releases will fail");
+        console.error("Failed to load escrow wallet:", e);
+        console.error("Key length:", ESCROW_PRIVATE_KEY?.length, "First chars:", ESCROW_PRIVATE_KEY?.slice(0, 10));
       }
+    } else {
+      console.warn("No ESCROW_PRIVATE_KEY set - payment releases will fail");
     }
   }
 
@@ -202,9 +206,10 @@ export class EscrowService {
       console.log(`Escrow released for job ${jobId}: ${workerAmount} to worker, ${platformFee} to platform`);
       return { success: true, txSig };
 
-    } catch (error) {
-      console.error("Escrow release error:", error);
-      return { success: false, error: "Release transaction failed" };
+    } catch (error: any) {
+      console.error("Escrow release error for job", jobId, ":", error?.message || error);
+      if (error?.logs) console.error("Logs:", error.logs);
+      return { success: false, error: `Release failed: ${error?.message || "Unknown error"}` };
     }
   }
 
